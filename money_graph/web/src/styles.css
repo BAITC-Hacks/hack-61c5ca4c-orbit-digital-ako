@@ -2593,3 +2593,62 @@ tbody tr:last-child td {
     max-height: 160px;
   }
 }
+/* Keyboard access, visible focus, minimum pointer targets and text alternatives. */
+:focus-visible {
+  outline: 3px solid #00659b;
+  outline-offset: 3px;
+}
+[data-theme="dark"] :focus-visible {
+  outline-color: #70e0d1;
+}
+:where(button, select, summary, input:not([type="hidden"])) {
+  min-height: 24px;
+  min-width: 24px;
+}
+:where(a, button, input, select, textarea, summary, [tabindex]) {
+  scroll-margin-block: 90px;
+}
+.graph-accessible {
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.graph-accessible summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 8px;
+}
+.graph-accessible p {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.graph-accessible ul {
+  list-style: none;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+}
+.graph-accessible li button {
+  width: 100%;
+  text-align: left;
+  overflow-wrap: anywhere;
+  margin-bottom: 4px;
+}
+.graph-accessible .actions {
+  margin-block: 12px;
+}
+.graph-full {
+  overflow-y: auto;
+}
+@media (forced-colors: active) {
+  :focus-visible {
+    outline: 3px solid Highlight;
+  }
+  button,
+  input,
+  select,
+  textarea {
+    border: 1px solid ButtonText;
+  }
+}
+.cluster-top a { display: flex; align-items: center; min-height: 28px; padding-block: 4px; }

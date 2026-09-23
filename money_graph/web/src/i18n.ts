@@ -1,6 +1,14 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 const ru = {
+  characterShortcuts: "Однобуквенные горячие клавиши (/, ?, E, B, A)",
+  graphKeyboardList: "Граф списком: выбор с клавиатуры",
+  graphKeyboardHelp:
+    "Tab — переход между элементами, Enter — открыть. На холсте: стрелки — перемещение, +/− — масштаб.",
+  graphResults: "Найдено: {{count}}",
+  previousPage: "Предыдущая страница",
+  nextPage: "Следующая страница",
+  moveNode: "Переместить выбранный узел",
   brand: "Граф денег",
   subtitle: "Локальная платформа расследований",
   projects: "Проекты",
@@ -97,6 +105,9 @@ const ru = {
   icons: "Пиктограммы",
   circles: "Круги",
   graphLimit: "Показано {{shown}} из {{total}} узлов",
+  clusterGraphLimit: "Обзор: {{shown}} из {{total}} кластеров",
+  clusterOverviewHint:
+    "Каждая фигура — кластер счетов. Нажмите, чтобы раскрыть его узлы и переводы.",
   seedPath: "Достижимые от seed",
   dateFrom: "С даты",
   dateTo: "По дату",
@@ -167,6 +178,14 @@ const ru = {
   cancelled: "Отменён",
 };
 const en: Record<string, string> = {
+  characterShortcuts: "Single-character shortcuts (/, ?, E, B, A)",
+  graphKeyboardList: "Graph list: keyboard selection",
+  graphKeyboardHelp:
+    "Tab to navigate, Enter to open. On the canvas: arrows to pan, +/− to zoom.",
+  graphResults: "Found: {{count}}",
+  previousPage: "Previous page",
+  nextPage: "Next page",
+  moveNode: "Move selected node",
   brand: "Money Graph",
   subtitle: "Local investigation workspace",
   projects: "Projects",
@@ -262,6 +281,9 @@ const en: Record<string, string> = {
   icons: "Pictograms",
   circles: "Circles",
   graphLimit: "Showing {{shown}} of {{total}} nodes",
+  clusterGraphLimit: "Overview: {{shown}} of {{total}} clusters",
+  clusterOverviewHint:
+    "Each shape is a cluster of accounts. Click to explore its accounts and transfers.",
   seedPath: "Reachable from seeds",
   dateFrom: "From date",
   dateTo: "To date",
@@ -332,6 +354,14 @@ const en: Record<string, string> = {
   cancelled: "Cancelled",
 };
 const kk: Record<string, string> = {
+  characterShortcuts: "Бір таңбалы пернелер (/, ?, E, B, A)",
+  graphKeyboardList: "Граф тізімі: пернетақтамен таңдау",
+  graphKeyboardHelp:
+    "Tab — ауысу, Enter — ашу. Кенепте: көрсеткілер — жылжыту, +/− — масштаб.",
+  graphResults: "Табылды: {{count}}",
+  previousPage: "Алдыңғы бет",
+  nextPage: "Келесі бет",
+  moveNode: "Таңдалған түйінді жылжыту",
   ...en,
   brand: "Ақша графы",
   subtitle: "Жергілікті зерттеу платформасы",
@@ -514,6 +544,9 @@ Object.assign(kk, {
   icons: "Пиктограммалар",
   circles: "Шеңберлер",
   graphLimit: "{{total}} түйіннің {{shown}} көрсетілді",
+  clusterGraphLimit: "Шолу: {{total}} кластердің {{shown}} көрсетілді",
+  clusterOverviewHint:
+    "Әр пішін — шоттар кластері. Шоттар мен аударымдарды ашу үшін басыңыз.",
   seedPath: "Бастапқы түйіннен қолжетімді",
   dateFrom: "Бастапқы күн",
   dateTo: "Соңғы күн",

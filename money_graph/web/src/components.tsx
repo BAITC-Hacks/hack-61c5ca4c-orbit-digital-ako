@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTranslation } from "react-i18next";
 import { AlertCircle, Check, X, LoaderCircle } from "lucide-react";
@@ -98,14 +98,28 @@ export function Modal({
   title,
   children,
   wide = false,
+  returnSelector,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
   wide?: boolean;
+  returnSelector?: string;
 }) {
   const { t } = useTranslation();
+  const returnFocus = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (open) return;
+    const remember = () => {
+      const target = document.activeElement;
+      if (target instanceof HTMLElement && target !== document.body && target !== document.documentElement && !target.closest('[role="dialog"]'))
+        returnFocus.current = target;
+    };
+    remember();
+    document.addEventListener("focusin", remember);
+    return () => document.removeEventListener("focusin", remember);
+  }, [open]);
   return (
     <Dialog.Root open={open} onOpenChange={(v) => !v && onClose()}>
       <Dialog.Portal>
@@ -113,6 +127,14 @@ export function Modal({
         <Dialog.Content
           className={"modal " + (wide ? "wide" : "")}
           aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            const target = returnSelector ? document.querySelector<HTMLElement>(returnSelector) : returnFocus.current;
+            requestAnimationFrame(() => {
+              if (target?.isConnected) target.focus();
+              else document.getElementById("main-content")?.focus();
+            });
+          }}
         >
           <div className="modal-heading">
             <Dialog.Title>{title}</Dialog.Title>

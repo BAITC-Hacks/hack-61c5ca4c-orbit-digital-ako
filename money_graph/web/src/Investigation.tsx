@@ -168,6 +168,7 @@ export function Investigation() {
   }, [graph.data, pathGraph, role, minimum, id, params]);
   useEffect(() => {
     function handler(e: KeyboardEvent) {
+      if (!useWorkspace.getState().shortcuts && e.key !== "Escape") return;
       if (
         (e.target as HTMLElement).matches("input,textarea,select") ||
         e.ctrlKey ||
@@ -423,14 +424,22 @@ export function Investigation() {
                 hidden={hidden}
                 pinned={pinned}
                 highlight={highlight}
-                storageKey={"layout-" + pid}
+                storageKey={
+                  "layout-" +
+                  pid +
+                  (filtered.overview ? "-overview-v2" : "-accounts")
+                }
                 onEdge={(src, dst) => setEdge({ src, dst })}
                 onSelect={(next) =>
                   filtered.overview
                     ? patch({ cluster: next, node: "", focus: "" })
                     : select(next)
                 }
-                onFocus={focusNode}
+                onFocus={(next) =>
+                  filtered.overview
+                    ? patch({ cluster: next, node: "", focus: "" })
+                    : focusNode(next)
+                }
               />
             )
           )}

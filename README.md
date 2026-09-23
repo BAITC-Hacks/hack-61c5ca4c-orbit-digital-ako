@@ -90,6 +90,8 @@ CLI и веб-приложение используют одно ядро `mg.pi
 
 ## Документация
 
+- [Доступность: исправления и границы проверки](money_graph/docs/ACCESSIBILITY.md)
+
 - [Инструкция, форматы, ограничения и архитектура](money_graph/README.md)
 - [Что реализовано и результаты проверок](money_graph/docs/VALIDATION.md)
 - [Сценарий демонстрации](money_graph/docs/DEMO_SCRIPT.md)
