@@ -34,8 +34,8 @@ def analyze(data_dir: Path, out: Path, cfg: dict):
     # Консоль Windows может использовать cp1252: лог не должен прерывать расчёт.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="backslashreplace")
-    input_info = validate_data(Path(data_dir), cfg.get("min_tx_kzt", 0))
-    cfg = {**cfg, "period_end": input_info["period_end"], "max_depth": input_info["max_depth"]}
+    input_info = validate_data(Path(data_dir), cfg.get("min_tx_kzt", 0), cfg.get("max_depth", 4))
+    cfg = {**cfg, "period_end": input_info["period_end"], "max_depth": cfg.get("max_depth", 4)}
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     log = lambda m: print(f"[{time.time() - t0:5.1f}s] {m}")
@@ -124,7 +124,7 @@ def analyze(data_dir: Path, out: Path, cfg: dict):
 
     summary = {"nodes": len(df), "edges": len(edges), "transactions": len(tx),
                "period_start": input_info["period_start"], "period_end": input_info["period_end"],
-               "max_depth": input_info["max_depth"], "seeds": input_info["seeds"],
+               "max_depth": cfg["max_depth"], "seeds": input_info["seeds"],
                "min_tx_kzt": cfg.get("min_tx_kzt", 5000),
                "roles": df.role.value_counts().to_dict(),
                "clusters": int(clusters.cluster_id.nunique()), "tainted_flow_kzt": round(float(total_flow)),

@@ -2,13 +2,14 @@
 
 import asyncio
 import json
+import logging
 import re
 import shutil
 import uuid
 from pathlib import Path
 
 import pandas as pd
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -21,6 +22,7 @@ ROOT = Path(__file__).resolve().parent
 CASES = ROOT / ".local" / "cases"
 EXPORTS = {"nodes_roles.csv", "clusters.csv", "top_nodes.csv", "requests.csv", "resilience.csv"}
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+ANALYSIS_SLOT = asyncio.Semaphore(1)
 app = FastAPI(title="Граф денег", docs_url=None, redoc_url=None)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 app.mount("/static", StaticFiles(directory=ROOT / "web"), name="static")
@@ -97,12 +99,14 @@ async def save_upload(upload: UploadFile, target: Path):
 @app.post("/api/cases", status_code=201)
 async def create_case(request: Request, nodes: UploadFile = File(...), edges: UploadFile = File(...),
                       transactions: UploadFile = File(...), label: str = Form("Новый кейс"),
-                      min_tx_kzt: int = Form(5000)):
+                      min_tx_kzt: int = Form(5000), max_depth: int = Form(4)):
     origin = request.headers.get("origin")
     if origin and origin != str(request.base_url).rstrip("/"):
         raise HTTPException(403, "Загрузка разрешена только из локального интерфейса")
     if min_tx_kzt < 0 or min_tx_kzt > 1_000_000_000:
         raise HTTPException(422, "Некорректный порог суммы")
+    if not 1 <= max_depth <= 4:
+        raise HTTPException(422, "Граница обхода должна быть от 1 до 4 хопов")
     label = label.strip()[:80] or "Новый кейс"
     case_id = uuid.uuid4().hex
     folder = CASES / case_id
@@ -114,18 +118,22 @@ async def create_case(request: Request, nodes: UploadFile = File(...), edges: Up
         for upload, name in ((nodes, "nodes.parquet"), (edges, "edges.parquet"),
                              (transactions, "transactions.parquet")):
             await save_upload(upload, data / name)
-        info = await asyncio.to_thread(validate_data, data, min_tx_kzt)
+        info = await asyncio.to_thread(validate_data, data, min_tx_kzt, max_depth)
         cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         cfg["min_tx_kzt"] = min_tx_kzt
-        summary = await asyncio.to_thread(analyze, data, folder / "out", cfg)
+        cfg["max_depth"] = max_depth
+        (folder / "config.json").write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
+        async with ANALYSIS_SLOT:
+            summary = await asyncio.to_thread(analyze, data, folder / "out", cfg)
         (folder / "case.json").write_text(json.dumps({"label": label, "min_tx_kzt": min_tx_kzt}, ensure_ascii=False), encoding="utf-8")
         return {"id": case_id, "label": label, "input": info, "summary": summary}
     except InputError as exc:
         shutil.rmtree(folder, ignore_errors=True)
         raise HTTPException(422, str(exc)) from exc
-    except Exception:
+    except Exception as exc:
+        logging.exception("Analysis failed for case %s", case_id)
         shutil.rmtree(folder, ignore_errors=True)
-        raise
+        raise HTTPException(500, "Не удалось завершить расчёт. Проверьте формат данных; подробности в журнале сервера.") from exc
     finally:
         for upload in (nodes, edges, transactions):
             await upload.close()
@@ -144,6 +152,8 @@ def graph(case_id: str):
     edges = pd.read_parquet(data / "edges.parquet")
     config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
     if case_id != "demo":
+        if (out.parent / "config.json").is_file():
+            config = json.loads((out.parent / "config.json").read_text(encoding="utf-8"))
         config["min_tx_kzt"] = json.loads((out.parent / "case.json").read_text(encoding="utf-8")).get("min_tx_kzt", 5000)
     return {
         "id": case_id, "label": label, "summary": summary,
@@ -158,6 +168,22 @@ def graph(case_id: str):
         "role_names": {**ROLE_RU, "truncated": f"Обрезан на {summary.get('max_depth', 4)}-м хопе"},
         "rules": config["roles"],
     }
+
+
+@app.get("/api/cases/{case_id}/transactions")
+def transactions_for_link(case_id: str, src: str = Query(pattern=r"^-?\d{1,19}$"),
+                          dst: str = Query(pattern=r"^-?\d{1,19}$"),
+                          offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100)):
+    data, _, _ = case_paths(case_id)
+    frame = pd.read_parquet(data / "transactions.parquet")
+    selected = frame[(frame.src.astype(str) == src) & (frame.dst.astype(str) == dst)].copy()
+    selected["date"] = pd.to_datetime(selected.date)
+    selected = selected.sort_values("date", ascending=False, kind="stable")
+    rows = selected.iloc[offset:offset + limit]
+    return {"src": src, "dst": dst, "total": len(selected),
+            "sum_kzt": float(selected.sum_kzt.sum()), "offset": offset, "limit": limit,
+            "items": [{"date": row.date.isoformat(), "sum_kzt": float(row.sum_kzt)}
+                      for row in rows.itertuples(index=False)]}
 
 
 @app.get("/api/cases/{case_id}/exports/{filename}")

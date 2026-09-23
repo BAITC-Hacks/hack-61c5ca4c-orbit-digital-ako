@@ -17,7 +17,7 @@ class InputError(ValueError):
     pass
 
 
-def validate_data(data_dir: Path, min_tx_kzt: int = 0) -> dict:
+def validate_data(data_dir: Path, min_tx_kzt: int = 0, max_depth: int = 4) -> dict:
     tables = {}
     for name, columns in REQUIRED.items():
         path = data_dir / name
@@ -47,8 +47,8 @@ def validate_data(data_dir: Path, min_tx_kzt: int = 0) -> dict:
         raise InputError("nodes.parquet: is_seed должен быть bool")
     if nodes.gid.duplicated().any() or edges.duplicated(["src", "dst"]).any():
         raise InputError("gid узлов и пары src/dst рёбер должны быть уникальными")
-    if not nodes.depth.between(0, 4).all() or not edges.depth.between(1, 4).all():
-        raise InputError("Ожидается выгрузка с глубиной обхода 0–4")
+    if not nodes.depth.between(0, max_depth).all() or not edges.depth.between(1, max_depth).all():
+        raise InputError(f"Глубина узлов или рёбер превышает заявленную границу обхода {max_depth}")
     if not nodes.is_seed.any() or (nodes.loc[nodes.is_seed, "depth"] != 0).any():
         raise InputError("Нужен хотя бы один seed с depth=0")
     gids = set(nodes.gid)
@@ -57,6 +57,8 @@ def validate_data(data_dir: Path, min_tx_kzt: int = 0) -> dict:
     if not set(tx.src).issubset(gids) or not set(tx.dst).issubset(gids):
         raise InputError("Транзакции ссылаются на отсутствующие gid")
     for name, frame in (("edges.parquet", edges), ("transactions.parquet", tx)):
+        if not pd.api.types.is_numeric_dtype(frame.sum_kzt) or pd.api.types.is_bool_dtype(frame.sum_kzt):
+            raise InputError(f"{name}: sum_kzt должен иметь числовой тип")
         amounts = pd.to_numeric(frame.sum_kzt, errors="coerce")
         if not np.isfinite(amounts).all() or (amounts <= 0).any():
             raise InputError(f"{name}: суммы должны быть положительными конечными числами")
