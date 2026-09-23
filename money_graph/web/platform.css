@@ -76,6 +76,12 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
 .inspector .evidence { font-size: 15px; }
 .advanced-results { margin-top: 16px; }
 .advanced-results .lower { padding: 0 12px; }
+.assistant-panel { max-width: 1552px; margin: 16px 24px; }
+.assistant-panel .panel-head p,.assistant-result { font-size: 14px; }
+.assistant-controls .button,.assistant-selection-head,#assistant-form label,#assistant-question { font-size: 13px; }
+.assistant-chip,#assistant-selection-hint,.assistant-availability,.assistant-limitations { font-size: 12px; }
+.assistant-map-hint,.assistant-notice,#assistant-sharing { font-size: 12px; }
+@media(min-width:1600px) { .assistant-panel { margin-left: auto; margin-right: auto; } }
 .platform-page { max-width: 1600px; padding: 28px 24px; margin: auto; }
 .page-heading { margin-bottom: 22px; }
 .page-heading h1 { font-size: 29px; letter-spacing: -.03em; margin: 5px 0 10px; }
@@ -149,6 +155,7 @@ pre, code { overflow-wrap: anywhere; white-space: pre-wrap; }
   .mobile-stage-nav .button { flex: 1; font-size: 13px; }
   .mobile-stage-nav [aria-pressed=true] { background: #e4f2ec; border-color: #278669; color: #176952; }
   .overview,.advanced-results { margin: 0 16px 14px; }
+  .assistant-panel { margin: 16px; }
   #case-overview { display: block; margin: 6px 0 0; }
   .workspace { display: grid; padding: 0 16px; grid-template-columns: minmax(0,1fr); grid-template-rows: auto; }
   .navigation { grid-row: 1; height: 620px; }

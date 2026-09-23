@@ -36,6 +36,7 @@ function pictogram(role,color) {
 }
 const state = {data:null,caseId:"demo",selected:null,tab:"top",cluster:null,network:null,hidden:new Set(),extras:new Set(),positions:{},pinned:new Set(),shapes:{...DEFAULT_SHAPES},nodes:new Map(),incoming:new Map(),outgoing:new Map()};
 Object.assign(state, {focus:null,page:0,pageSize:10,loadController:null,loadVersion:0,graphFlow:false,tx:null,txVersion:0,workspaces:new Map()});
+const assistant = {gids:[],configured:false,checked:false,availabilityError:false,busy:false,version:0,statusVersion:0,controller:null,result:null,edges:new Set(),nodes:new Set()};
 
 function el(tag, cls, value) {
   const node = document.createElement(tag);
@@ -102,6 +103,9 @@ async function loadCase(id) {
   window.dispatchEvent(new Event("case-loading"));
   document.querySelectorAll(".platform-page").forEach(page=>page.inert=true);
   $("report-selected").disabled=true;
+  resetAssistant(true);
+  if(state.data) renderGraph();
+  $("assistant-panel").inert=true;
   state.loadController?.abort();
   state.loadController=new AbortController();
   $("workspace").inert=true; $("workspace").setAttribute("aria-busy","true"); $("retry").hidden=true;
@@ -109,12 +113,14 @@ async function loadCase(id) {
   let data;
   try { data=await api("/api/cases/"+encodeURIComponent(id)+"/graph",{signal:state.loadController.signal}); }
   catch(error) {
-    if (error.name==="AbortError") return;
+    if (error.name==="AbortError" || version!==state.loadVersion) return;
+    state.loading=false;
     $("retry").hidden=false; $("case-select").value=state.caseId;
     status("Не удалось загрузить кейс. "+error.message,true); return;
   } finally {
     if(version===state.loadVersion) {
       $("workspace").inert=!state.data;$("workspace").setAttribute("aria-busy","false");
+      $("assistant-panel").inert=!state.data;
       document.querySelectorAll(".platform-page").forEach(page=>page.inert=false);$("report-selected").disabled=!state.data;
     }
   }
@@ -139,11 +145,12 @@ async function loadCase(id) {
   state.loading=false;
   $("workspace").inert=false;
   $("report-selected").disabled=false;
+  $("assistant-panel").inert=false;
   status(data.label+" · "+fmt(data.summary.nodes)+" узлов · расчёт "+data.summary.runtime_sec+" с");
   $("case-overview").textContent=fmt(data.summary.nodes)+" клиентов · "+fmt(data.summary.seeds)+" seed · "+fmt(data.summary.clusters)+" групп";
   window.dispatchEvent(new CustomEvent("case-loaded",{detail:{id}}));
 }
-function renderAll() { renderSummary(); renderTabs(); renderList(); renderCard(); renderShapes(); renderGraph(); renderModel(); renderDownloads(); }
+function renderAll() { renderSummary(); renderTabs(); renderList(); renderCard(); renderShapes(); renderGraph(); renderModel(); renderDownloads(); renderAssistant(); }
 function renderSummary() {
   const s=state.data.summary;
   $("m-nodes").textContent=fmt(s.nodes); $("m-seeds").textContent=fmt(s.seeds ?? state.data.nodes.filter(n=>n.is_seed).length);
@@ -175,14 +182,16 @@ function renderTabs() {
   $("list").setAttribute("aria-labelledby","tab-"+state.tab);
   document.querySelector(".filters").hidden=state.tab!=="top";
 }
-function activateNode(gid, keepGraph=false) {
+function activateNode(gid, keepGraph=false, fromAssistant=false) {
   if (!state.nodes.has(gid)) return;
+  const clearedHighlights=!fromAssistant && gid!==state.selected && assistant.nodes.size>0;
+  if (!fromAssistant && gid!==state.selected) resetAssistant();
   rememberPositions();
   state.selected=gid;
   state.hidden.delete(gid);
   if (!keepGraph) {state.cluster=null;state.focus=gid;state.extras.clear();}
-  renderList(); renderCard();
-  if (keepGraph && state.network) state.network.selectNodes([gid]);
+  renderList(); renderCard(); renderAssistant();
+  if (keepGraph && state.network && !clearedHighlights) state.network.selectNodes([gid]);
   else renderGraph();
 }
 function rowButton(parent, title, note, handler, active=false) {
@@ -206,7 +215,7 @@ function renderList() {
     for (const cluster of pageItems(clusters.filter(c=>!q || state.data.nodes.some(n=>n.cluster_id===c.cluster_id && n.gid.includes(q))))) {
       rowButton(list,"Кластер "+cluster.cluster_id+" · "+fmt(cluster.n_nodes)+" узлов",
         fmt(cluster.n_seed)+" seed · "+cluster.hypothesis,()=>{
-          rememberPositions(); state.extras.clear();state.cluster=cluster.cluster_id; state.selected=String(cluster.top_gids).split(";")[0];state.focus=state.selected;renderList();renderCard();renderGraph();
+          resetAssistant();rememberPositions(); state.extras.clear();state.cluster=cluster.cluster_id; state.selected=String(cluster.top_gids).split(";")[0];state.focus=state.selected;renderList();renderCard();renderGraph();renderAssistant();
         },state.cluster===cluster.cluster_id);
     }
   } else if (state.tab==="requests") {
@@ -275,15 +284,178 @@ function renderCard() {
   detail(kv,"Входящий поток",money(n.in_kzt));detail(kv,"Исходящий поток",money(n.out_kzt));
   detail(kv,"Посредничество",Number(n.betweenness||0).toFixed(4));
   detail(kv,"Связь с seed",fmt(n.seed_sources)+" источников");
+  if(n.block_impact!=null && Number.isFinite(Number(n.block_impact))) {
+    const change=-Number(n.block_impact)*100;
+    detail(kv,"Изменение потока при исключении",(change>0?"+":"")+change.toFixed(1)+"%");
+  }
   if (n.p_onward!=null && state.data.summary.cutoff_model?.train_nodes>0) detail(kv,"Оценка следующего хопа",Math.round(n.p_onward*100)+"%");
+  renderPriorityBreakdown(card,n);
   const actions=append(card,"div","card-actions");
   const focus=append(actions,"button","button","Показать окружение");focus.addEventListener("click",()=>activateNode(n.gid));
   const copy=append(actions,"button","button","Скопировать gid");copy.addEventListener("click",async()=>{try{await navigator.clipboard.writeText(n.gid);copy.textContent="Скопировано";}catch(_){status("Не удалось скопировать gid. Выделите номер в карточке.",true);}});
+  const investigate=append(actions,"button","button","Добавить в разбор");investigate.type="button";investigate.disabled=assistant.gids.includes(n.gid)||assistant.gids.length>=5;investigate.addEventListener("click",()=>{addAssistantNode(n.gid);$("assistant-title").scrollIntoView({behavior:"smooth",block:"start"});});
   append(card,"small","","Оценка правила — не вероятность вины. Ниже связи; нажмите для просмотра переводов.");
   const go=append(actions,"a","button","Перейти к графу");go.href="#network-panel";
   connectionSection(card,"Крупнейшие входящие",state.incoming.get(n.gid)||[],true);
   connectionSection(card,"Крупнейшие исходящие",state.outgoing.get(n.gid)||[],false);
   $("pin-node").checked=state.pinned.has(n.gid);
+}
+function renderPriorityBreakdown(parent,node) {
+  const components=[
+    ["priority_tainted_in","Поток от seed"],
+    ["priority_block_impact","Эффект исключения"],
+    ["priority_role","Роль узла"],
+    ["priority_betweenness","Посредничество"],
+    ["priority_seed_sources","Число seed-источников"],
+    ["priority_turnover","Оборот"]
+  ];
+  if(!components.every(([field])=>node[field]!=null && Number.isFinite(Number(node[field])))) return;
+  const section=append(parent,"details","criterion priority-breakdown");
+  append(section,"summary","","Из чего сложился приоритет");
+  append(section,"p","","Вклад каждого признака с учётом его веса. Сумма даёт приоритет узла; небольшое расхождение возможно из-за округления.");
+  for(const [field,label] of components) {
+    const row=append(section,"div","priority-part");
+    append(row,"span","",label);append(row,"strong","",Number(node[field]).toFixed(3));
+    const track=append(row,"div","priority-track"),bar=append(track,"span");
+    bar.style.width=Math.min(100,Math.max(0,Number(node[field])*100))+"%";
+    track.setAttribute("aria-hidden","true");
+  }
+}
+function resetAssistant(clearGids=false) {
+  assistant.version++;
+  assistant.controller?.abort();assistant.controller=null;
+  assistant.busy=false;assistant.result=null;assistant.edges.clear();assistant.nodes.clear();
+  if(clearGids) {assistant.gids=[];$("assistant-question").value="";}
+  $("assistant-error").hidden=true;
+  clear($("assistant-result"));
+  append($("assistant-result"),"p","muted","Выберите действие для узлов в разборе. Ответ будет опираться на данные текущего кейса.");
+  renderAssistant();
+}
+function renderAssistant() {
+  const count=assistant.gids.length, ready=Boolean(state.data);
+  $("assistant-count").textContent=count+" / 5";
+  const selection=$("assistant-selection");clear(selection);
+  for(const [index,gid] of assistant.gids.entries()) {
+    const chip=append(selection,"span","assistant-chip");
+    append(chip,"span","",(index+1)+". "+gid);
+    const remove=append(chip,"button","","×");remove.type="button";
+    remove.setAttribute("aria-label","Убрать узел "+gid+" из разбора");
+    remove.addEventListener("click",()=>{
+      assistant.gids=assistant.gids.filter(id=>id!==gid);resetAssistant();renderCard();renderGraph();
+    });
+  }
+  $("assistant-selection-hint").textContent=count
+    ? "Для общих получателей нужны хотя бы два узла. Для пути — ровно два: от первого добавленного ко второму. Изменение выбора очищает ответ."
+    : ready && state.selected
+      ? "Сейчас выбран счёт "+state.selected+". Нажмите «+ Выбранный узел», чтобы открыть разбор и задать вопрос."
+      : "После загрузки графа выберите узел и добавьте его в разбор.";
+  const alreadyAdded=assistant.gids.includes(state.selected);
+  $("assistant-add").disabled=!ready || !state.selected || count>=5 || alreadyAdded;
+  $("assistant-add").textContent=alreadyAdded?"Узел уже добавлен":"+ Выбранный узел";
+  document.querySelectorAll("[data-assistant-mode]").forEach(button=>{
+    const minimum=["common_recipients","paths"].includes(button.dataset.assistantMode)?2:1;
+    button.disabled=!ready || assistant.busy || count<minimum || (button.dataset.assistantMode==="paths" && count!==2);
+    button.title=!ready?"Дождитесь загрузки графа":assistant.busy?"Дождитесь завершения ответа":
+      button.dataset.assistantMode==="paths" && count!==2?"Добавьте ровно два счёта: сначала отправителя, затем получателя":
+      count<minimum?(minimum===2?"Добавьте хотя бы два счёта в разбор":"Нажмите «+ Выбранный узел»"):"";
+  });
+  $("assistant-progress").hidden=!assistant.busy;
+  $("assistant-result").setAttribute("aria-busy",String(assistant.busy));
+  $("assistant-form").hidden=!assistant.configured;
+  $("assistant-submit").disabled=!ready || assistant.busy || !count || !assistant.configured;
+  $("assistant-question").disabled=assistant.busy;
+  $("assistant-availability").textContent=!assistant.checked
+    ? "Проверяем доступность ИИ-помощника…"
+    : assistant.configured
+      ? "Ключ настроен. Доступ к ИИ проверяется при нажатии «Спросить ИИ»."
+      : assistant.availabilityError
+        ? "Не удалось проверить подключение ИИ. Готовые действия можно использовать без него."
+        : "ИИ пока не подключён. Все четыре готовых действия доступны без API-ключа.";
+}
+async function loadAssistantStatus() {
+  if(!session.user || session.user.must_change_password) return;
+  const generation=session.generation,version=++assistant.statusVersion;
+  assistant.checked=false;assistant.configured=false;assistant.availabilityError=false;
+  renderAssistant();
+  try {
+    const result=await api("/api/assistant/status");
+    if(generation!==session.generation || version!==assistant.statusVersion) return;
+    assistant.configured=result.configured===true;
+  } catch(_) {
+    if(generation===session.generation && version===assistant.statusVersion) assistant.availabilityError=true;
+  } finally {
+    if(generation===session.generation && version===assistant.statusVersion) {assistant.checked=true;renderAssistant();}
+  }
+}
+function addAssistantNode(gid) {
+  if(!state.nodes.has(gid) || assistant.gids.includes(gid) || assistant.gids.length>=5) return;
+  assistant.gids.push(gid);resetAssistant();renderCard();renderGraph();
+}
+function showAssistantResult(result) {
+  assistant.result=result;
+  const panel=$("assistant-result");clear(panel);
+  append(panel,"span","assistant-result-label",result.mode==="openai"?"Объяснение ИИ по найденным фактам":"Разбор по данным графа");
+  append(panel,"div","assistant-answer",result.answer);
+  const evidence=Array.isArray(result.evidence)?result.evidence.filter(item=>state.nodes.has(item.gid)):[];
+  for(const edge of Array.isArray(result.edges)?result.edges:[]) {
+    if(!(state.outgoing.get(edge.src)||[]).some(item=>item[1]===edge.dst)) continue;
+    assistant.edges.add(edge.src+":"+edge.dst);assistant.nodes.add(edge.src);assistant.nodes.add(edge.dst);
+  }
+  for(const item of evidence) assistant.nodes.add(item.gid);
+  for(const gid of assistant.gids) assistant.nodes.add(gid);
+  for(const gid of assistant.nodes) state.hidden.delete(gid);
+  if(evidence.length) {
+    append(panel,"h3","assistant-subtitle","Узлы, на которые опирается ответ");
+    const list=append(panel,"ul","assistant-evidence");
+    for(const item of evidence) {
+      const row=append(list,"li"),button=append(row,"button","assistant-node-link",item.gid);button.type="button";
+      button.setAttribute("aria-label","Показать узел "+item.gid+" на схеме");
+      button.addEventListener("click",()=>{
+        activateNode(item.gid,false,true);
+        $("graph-heading").scrollIntoView({behavior:"smooth",block:"start"});
+        state.network?.fit({animation:true});
+      });
+      append(row,"span","",item.reason);
+    }
+  }
+  if(assistant.edges.size) append(panel,"p","assistant-map-hint","Подтверждающие связи выделены на схеме янтарным цветом. Нажмите на связь, чтобы открыть переводы.");
+  if(result.limitations?.length) {
+    append(panel,"h3","assistant-subtitle","Что ограничивает вывод");
+    const list=append(panel,"ul","assistant-limitations");
+    for(const limitation of result.limitations) append(list,"li","",limitation);
+  }
+  if(result.notice) append(panel,"p","assistant-notice",result.notice);
+  if(assistant.nodes.size>Number($("node-limit").value)) $("node-limit").value=assistant.nodes.size<=100?"100":"220";
+  renderGraph();
+}
+async function askAssistant(mode) {
+  const minimum=["common_recipients","paths"].includes(mode)?2:1;
+  if(!session.user || session.user.must_change_password || !state.data || state.loading || assistant.busy || assistant.gids.length<minimum) return;
+  if(mode==="paths" && assistant.gids.length!==2) return;
+  if(mode==="question" && !assistant.configured) return;
+  const question=mode==="question"?$("assistant-question").value.trim():"";
+  if(mode==="question" && (!question || question.length>1000)) return;
+  resetAssistant();renderGraph();
+  assistant.busy=true;assistant.controller=new AbortController();
+  const version=assistant.version,caseId=state.caseId,loadVersion=state.loadVersion,generation=session.generation;
+  $("assistant-progress").textContent=mode==="question"?"ИИ составляет объяснение по найденным фактам…":"Проверяем связи выбранных узлов…";
+  renderAssistant();
+  try {
+    const result=await api("/api/cases/"+encodeURIComponent(caseId)+"/assistant",{
+      method:"POST",headers:{"Content-Type":"application/json"},signal:assistant.controller.signal,
+      body:JSON.stringify({question,gids:[...assistant.gids],mode})
+    });
+    if(version!==assistant.version || caseId!==state.caseId || loadVersion!==state.loadVersion || generation!==session.generation) return;
+    showAssistantResult(result);
+  } catch(error) {
+    if(error.name==="AbortError" || version!==assistant.version || loadVersion!==state.loadVersion || generation!==session.generation) return;
+    $("assistant-error").textContent=error.message || "Не удалось получить ответ. Повторите вопрос.";
+    $("assistant-error").hidden=false;
+    clear($("assistant-result"));
+    append($("assistant-result"),"p","muted","Ответ не получен. После устранения указанной причины повторите вопрос.");
+  } finally {
+    if(version===assistant.version && generation===session.generation) {assistant.busy=false;assistant.controller=null;renderAssistant();}
+  }
 }
 function neighbours(start,hops,direction,limit=Number($("node-limit").value)) {
   const found=new Set([start]);let frontier=[start];
@@ -308,7 +480,7 @@ function visibleIds() {
   if (state.cluster!==null) ids=new Set(state.data.nodes.filter(n=>n.cluster_id===state.cluster)
     .sort((a,b)=>b.priority_score-a.priority_score).slice(0,Number($("node-limit").value)).map(n=>n.gid));
   else ids=neighbours(state.focus,Number($("hops").value),$("direction").value);
-  ids=new Set([...new Set([...state.extras,...ids])].slice(0,Number($("node-limit").value)));
+  ids=new Set([...new Set([...assistant.nodes,...state.extras,...ids])].slice(0,Number($("node-limit").value)));
   for (const id of state.hidden) ids.delete(id);
   return ids;
 }
@@ -334,8 +506,9 @@ function renderGraph(remember=true) {
     ? neighbours(state.focus,Number($("hops").value),$("direction").value,Infinity)
     : new Set(state.data.nodes.filter(n=>n.cluster_id===state.cluster).map(n=>n.gid));
   for(const id of state.extras)available.add(id);
+  for(const id of assistant.nodes)available.add(id);
   $("graph-count").textContent="Показано "+fmt(ids.size)+" из "+fmt(available.size)+" узлов · скрыто вручную "+state.hidden.size;
-  $("graph-subtitle").textContent="gid "+state.focus+" · нажмите на связь, чтобы увидеть переводы";
+  $("graph-subtitle").textContent=assistant.edges.size?"Янтарные связи — факты из ответа помощника; щелчок открывает переводы":"gid "+state.focus+" · нажмите на связь, чтобы увидеть переводы";
   const vertices=[...ids].map(id=>{
     const n=state.nodes.get(id), xy=state.positions[id], selected=id===state.selected;
     const shape=state.shapes[n.role]||"dot";
@@ -352,9 +525,9 @@ function renderGraph(remember=true) {
   });
   const links=state.data.edges.filter(e=>ids.has(e[0])&&ids.has(e[1])).map((e,i)=>({
     id:e[0]+":"+e[1],from:e[0],to:e[1],arrows:{to:{enabled:true,scaleFactor:.6}},
-    width:Math.max(1,Math.min(5,Math.log10(Math.max(e[2],1))-2)),
+    width:assistant.edges.has(e[0]+":"+e[1])?5:Math.max(1,Math.min(5,Math.log10(Math.max(e[2],1))-2)),
     label:$("edge-labels").checked?fmt(e[2]):"",font:{size:9,color:"#5f7581",strokeWidth:3,strokeColor:"#fff"},
-    title:money(e[2])+" · "+fmt(e[3])+" переводов",color:{color:"#7c95a2",opacity:.7},smooth:{type:"continuous",roundness:.12}
+    title:money(e[2])+" · "+fmt(e[3])+" переводов",color:{color:assistant.edges.has(e[0]+":"+e[1])?"#b96912":"#7c95a2",opacity:assistant.edges.has(e[0]+":"+e[1])?1:.7},smooth:{type:"continuous",roundness:.12}
   }));
   if (state.network) state.network.destroy();
   state.graphFlow=flow;
@@ -376,24 +549,37 @@ function renderGraph(remember=true) {
   network.once("stabilized",()=>{if(state.network!==network)return;network.setOptions({physics:false});network.fit({animation:false});rememberPositions();});
   requestAnimationFrame(()=>{if(state.network===network){network.redraw();network.fit({animation:false});}});
 }
+function renderTaintAssumptions(parent,summary) {
+  if(!Array.isArray(summary.taint_assumptions) || !summary.taint_assumptions.length) return;
+  const details=append(parent,"details","model-assumptions");
+  append(details,"summary","","Допущения расчёта потока");
+  const list=append(details,"ul");
+  for(const assumption of summary.taint_assumptions) append(list,"li","",assumption);
+}
 function renderModel() {
   const root=$("model-chart");clear(root);
   const rows=state.data.resilience;
-  if (!rows.length) {append(root,"p","muted","Нет сценарных данных.");return;}
+  if (!rows.length) {append(root,"p","muted","Нет сценарных данных.");renderTaintAssumptions(root,state.data.summary);return;}
+  const largest=Math.max(1,...rows.flatMap(row=>[row.tainted_flow_left,row.random_flow_left]).filter(Number.isFinite));
+  const yMax=Math.ceil(largest*10)/10;
+  const y=value=>118-Number(value)/yMax*95;
   const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.setAttribute("viewBox","0 0 500 145");svg.setAttribute("role","img");svg.setAttribute("aria-label","Доля потока после исключения приоритетных и случайных узлов");
   const add=(tag,attrs)=>{const node=document.createElementNS("http://www.w3.org/2000/svg",tag);for(const [k,v] of Object.entries(attrs))node.setAttribute(k,String(v));svg.append(node);return node;};
-  for(const y of [0,.5,1]) {const py=118-y*95;add("line",{x1:35,y1:py,x2:485,y2:py,stroke:"#e0e8eb"});const t=add("text",{x:3,y:py+3,fill:"#718592","font-size":10});t.textContent=Math.round(y*100)+"%";}
+  for(const level of [0,yMax/2,yMax]) {const py=y(level);add("line",{x1:35,y1:py,x2:485,y2:py,stroke:"#e0e8eb"});const t=add("text",{x:3,y:py+3,fill:"#718592","font-size":10});t.textContent=Math.round(level*100)+"%";}
   const max=rows[rows.length-1].n_blocked||1;
   for(const k of [0,Math.round(max/2),max]) {const t=add("text",{x:35+k/max*450,y:140,fill:"#617481","font-size":10,"text-anchor":"middle"});t.textContent=k;}
   for(const [key,color] of [["tainted_flow_left","#b54d3a"],["random_flow_left","#4384a4"]]) {
-    const points=rows.map(r=>(35+r.n_blocked/max*450)+","+(118-r[key]*95)).join(" ");add("polyline",{points,fill:"none",stroke:color,"stroke-width":3,"stroke-linecap":"round","stroke-linejoin":"round","stroke-dasharray":key==="random_flow_left"?"6 4":"none"});
+    const points=rows.map(r=>(35+r.n_blocked/max*450)+","+y(r[key])).join(" ");add("polyline",{points,fill:"none",stroke:color,"stroke-width":3,"stroke-linecap":"round","stroke-linejoin":"round","stroke-dasharray":key==="random_flow_left"?"6 4":"none"});
   }
   root.append(svg);
   const legend=append(root,"small","","Красная линия — приоритетные узлы · синяя — случайные. По оси X: число исключённых узлов.");legend.style.padding="0";
+  renderTaintAssumptions(root,state.data.summary);
 }
 function renderDownloads() {
   const root=$("downloads");clear(root);
-  for (const [file,label] of [["nodes_roles.csv","Роли и приоритет"],["clusters.csv","Кластеры"],["top_nodes.csv","Топ узлов"],["requests.csv","Запросы данных"],["resilience.csv","Сценарий"]]) {
+  const files=[["nodes_roles.csv","Роли и приоритет"],["clusters.csv","Кластеры"],["top_nodes.csv","Топ узлов"],["requests.csv","Запросы данных"],["resilience.csv","Сценарий"]];
+  if(state.data.summary.taint_model) files.push(["taint_edges.csv","Расчёт потока по связям"]);
+  for (const [file,label] of files) {
     const link=append(root,"a","",label+" ↗");link.href="/api/cases/"+state.caseId+"/exports/"+file;link.download=file;
   }
 }
@@ -501,3 +687,6 @@ $("upload-form").addEventListener("submit",async event=>{
 });
 $("upload-dialog").addEventListener("cancel",event=>{if($("upload-submit").disabled)event.preventDefault();});
 // Authentication bootstraps the case in platform.js. Never fetch private data before login.
+$("assistant-add").addEventListener("click",()=>addAssistantNode(state.selected));
+document.querySelectorAll("[data-assistant-mode]").forEach(button=>button.addEventListener("click",()=>askAssistant(button.dataset.assistantMode)));
+$("assistant-form").addEventListener("submit",event=>{event.preventDefault();askAssistant("question");});

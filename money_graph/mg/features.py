@@ -1,4 +1,5 @@
 """Загрузка данных и метрики узлов: структура, суммы, время, связь с seed."""
+from collections import defaultdict, deque
 from pathlib import Path
 
 import networkx as nx
@@ -23,28 +24,58 @@ def build_graph(edges: pd.DataFrame, nodes: pd.DataFrame) -> nx.DiGraph:
 
 
 def temporal_features(tx: pd.DataFrame, lag_days: int) -> pd.DataFrame:
-    """Доля исходящих сумм рядом по дате с любым предшествующим поступлением.
+    """Amount-covered fast outflow using FIFO lots from strictly earlier days.
 
-    Это временной прокси: входящие суммы не распределяются между исходящими.
-    При датах без времени порядок переводов в один день неизвестен.
+    The export has calendar dates, so within-day order is unknown: all debits
+    happen before that day's credits. Each observed incoming amount is spent
+    at most once, including when it is too old to count as fast. Uncovered
+    outflow is unknown starting/external funding and never counts as fast.
+    median_lag is the amount-weighted median delay of matched amounts only.
+    FIFO is an explicit accounting assumption, not proof of money identity.
     """
-    inc = tx[["dst", "date", "src"]].rename(columns={"dst": "gid", "date": "in_date", "src": "payer"})
-    out = tx[["src", "date", "sum_kzt"]].rename(columns={"src": "gid", "date": "out_date"})
-    out = out.reset_index().rename(columns={"index": "tx_id"})
+    daily = tx.assign(date=pd.to_datetime(tx.date).dt.normalize())
+    inc = daily[["dst", "date", "src"]].rename(columns={"dst": "gid", "date": "in_date", "src": "payer"})
+    lots = defaultdict(deque)
+    totals, covered, fast = defaultdict(float), defaultdict(float), defaultdict(float)
+    delays, overlap = defaultdict(list), defaultdict(float)
+    for day, part in daily.sort_values("date", kind="stable").groupby("date", sort=False):
+        incoming = part.groupby("dst").sum_kzt.sum()
+        outgoing = part.groupby("src").sum_kzt.sum()
+        for gid, amount in outgoing.items():
+            remaining = float(amount)
+            totals[gid] += remaining
+            overlap[gid] += min(remaining, float(incoming.get(gid, 0.0)))
+            queue = lots[gid]
+            while remaining > 1e-9 and queue:
+                received_day, available = queue[0]
+                matched = min(remaining, available)
+                lag = (day - received_day).days
+                covered[gid] += matched
+                fast[gid] += matched if lag <= lag_days else 0.0
+                delays[gid].append((lag, matched))
+                remaining -= matched
+                available -= matched
+                if available <= 1e-9:
+                    queue.popleft()
+                else:
+                    queue[0] = (received_day, available)
+        for gid, amount in incoming.items():
+            lots[gid].append((day, float(amount)))
 
-    # для каждой исходящей транзакции — ближайший предшествующий входящий перевод
-    inc_s = inc.sort_values("in_date")
-    out_s = out.sort_values("out_date")
-    m = pd.merge_asof(out_s, inc_s[["gid", "in_date"]], left_on="out_date", right_on="in_date",
-                      by="gid", direction="backward")
-    m["lag"] = (m.out_date - m.in_date).dt.days
-    m["fast"] = m.lag.le(lag_days)
-
-    f = m.groupby("gid").apply(
-        lambda d: pd.Series({
-            "fast_share": d.loc[d.fast, "sum_kzt"].sum() / d.sum_kzt.sum(),
-            "median_lag": d.lag.median(),
-        }), include_groups=False)
+    rows = []
+    for gid, total in totals.items():
+        cumulative, median = 0.0, np.nan
+        for lag, amount in sorted(delays[gid]):
+            cumulative += amount
+            if cumulative >= covered[gid] / 2:
+                median = float(lag)
+                break
+        rows.append({"gid": gid, "fast_share": fast[gid] / total if total else 0.0,
+                     "median_lag": median, "matched_out_kzt": covered[gid],
+                     "unmatched_out_kzt": max(0.0, total - covered[gid]),
+                     "same_day_overlap_kzt": overlap[gid]})
+    f = pd.DataFrame(rows, columns=["gid", "fast_share", "median_lag", "matched_out_kzt",
+                                   "unmatched_out_kzt", "same_day_overlap_kzt"]).set_index("gid")
 
     # синхронные поступления: сколько разных плательщиков прислали в один день
     sync = inc.groupby(["gid", "in_date"]).payer.nunique().groupby("gid").max().rename("sync_payers_max")
@@ -98,7 +129,8 @@ def compute_features(G, edges, nodes, tx, cfg) -> pd.DataFrame:
 
     df = df.join(temporal_features(tx, cfg["fast_lag_days"]))
     fill0 = ["in_deg", "out_deg", "in_kzt", "out_kzt", "in_tx", "out_tx", "seed_payers", "seed_sources",
-             "pays_to_seed", "cycles_le4", "sync_payers_max"]
+             "pays_to_seed", "cycles_le4", "sync_payers_max", "matched_out_kzt", "unmatched_out_kzt",
+             "same_day_overlap_kzt"]
     df[fill0] = df[fill0].fillna(0)
     for c in ["in_deg", "out_deg", "in_tx", "out_tx", "seed_payers", "seed_sources", "pays_to_seed",
               "cycles_le4", "sync_payers_max"]:

@@ -1,9 +1,12 @@
-"""«Меченые деньги» (haircut-метод) и симулятор блокировки.
+"""Chronological, available-balance-capped marked flow and removal scenarios.
 
-Seed-клиенту приписывается доля 1.0 «меченых» денег. Каждый узел передаёт дальше ту же
-долю меченых денег, какая была среди полученного им (пропорционально суммам рёбер).
-Это конечное число итераций по агрегированным рёбрам, не трассировка отдельных
-денежных единиц: одна сумма может учитываться на нескольких рёбрах.
+Dates have day precision: debit batches use only earlier-day credits, then all
+credits are booked together. Incoming money is proportionally mixed (haircut).
+Uncovered debits are funded by unknown/unmarked starting or external money;
+they never borrow future receipts. Seed outflows are marked by definition,
+including fresh seed-origin injections. This is an accounting scenario, not
+proof of a specific money trail. Total flow counts money once per transfer,
+so a chronological cycle can count the same money on more than one edge.
 """
 import networkx as nx
 import numpy as np
@@ -11,42 +14,85 @@ import pandas as pd
 
 
 class TaintModel:
-    def __init__(self, edges: pd.DataFrame, df: pd.DataFrame, iterations: int):
+    def __init__(self, edges: pd.DataFrame, df: pd.DataFrame, iterations=None, *, tx=None):
+        # Keep the former positional argument for callers; convergence iterations
+        # have no meaning in a chronological model and are deliberately unused.
+        if tx is None:
+            raise ValueError("Chronological taint requires transactions (tx=...), including dates")
+        self.edges = edges.reset_index(drop=True).copy()
         self.gids = df.index.to_numpy()
         self.idx = {g: i for i, g in enumerate(self.gids)}
         self.src = edges.src.map(self.idx).to_numpy()
         self.dst = edges.dst.map(self.idx).to_numpy()
         self.w = edges.sum_kzt.to_numpy(dtype=float)
-        self.seed = df.is_seed.to_numpy()
+        self.seed = df.is_seed.to_numpy(dtype=bool)
         self.n = len(self.gids)
-        self.iters = iterations
+        edge_ids = {(row.src, row.dst): i for i, row in enumerate(self.edges.itertuples(index=False))}
+        dated = tx.assign(day=pd.to_datetime(tx.date).dt.normalize()).sort_values("day", kind="stable")
+        self.days = []
+        for _, part in dated.groupby("day", sort=False):
+            self.days.append((part.src.map(self.idx).to_numpy(dtype=int),
+                              part.dst.map(self.idx).to_numpy(dtype=int),
+                              part.sum_kzt.to_numpy(dtype=float),
+                              np.array([edge_ids[(s, d)] for s, d in zip(part.src, part.dst)])))
+        self._baseline = None
 
-    def propagate(self, removed: np.ndarray | None = None):
-        """Return (state_H, incoming_H, edge_flow_H) for H configured updates.
+    def _simulate(self, removed=None, trace=False):
+        removed = np.zeros(self.n, dtype=bool) if removed is None else np.asarray(removed, dtype=bool)
+        if removed.shape != (self.n,):
+            raise ValueError("removed must contain one flag per node")
+        balance, marked = np.zeros(self.n), np.zeros(self.n)
+        received, tainted_in = np.zeros(self.n), np.zeros(self.n)
+        edge_flow = np.zeros(len(self.edges)) if trace else None
+        for src, dst, amount, edge_idx in self.days:
+            w = np.where(removed[src] | removed[dst], 0.0, amount)
+            outgoing = np.bincount(src, weights=w, minlength=self.n)
+            # All same-day outgoing transfers share the prior available marked
+            # balance proportionally, even if their total exceeds that balance.
+            denominator = np.maximum(balance, outgoing)
+            fraction = np.divide(marked, denominator, out=np.zeros(self.n), where=denominator > 0)
+            fraction[self.seed & ~removed] = 1.0
+            flow = w * np.clip(fraction[src], 0.0, 1.0)
+            spent_share = np.divide(np.minimum(balance, outgoing), balance,
+                                    out=np.zeros(self.n), where=balance > 0)
+            marked *= 1.0 - spent_share
+            balance = np.maximum(0.0, balance - outgoing)
+            credited = np.bincount(dst, weights=w, minlength=self.n)
+            credited_marked = np.bincount(dst, weights=flow, minlength=self.n)
+            balance += credited
+            marked += credited_marked
+            received += credited
+            tainted_in += credited_marked
+            if trace:
+                edge_flow += np.bincount(edge_idx, weights=flow, minlength=len(self.edges))
+        share = np.divide(tainted_in, received, out=np.zeros(self.n), where=received > 0)
+        return share, tainted_in, float(tainted_in.sum()), edge_flow
 
-        After H updates, edge_flow[u,v] = observed_amount[u,v] * state_H[u].
-        incoming_H[v] is the sum of those SAME edge flows entering v. Its
-        fraction is incoming_H[v] / observed_incoming[v], not state_H[v]:
-        seed states are forced to one and finite-step states need not converge.
-        The historical finite-horizon algorithm and ranking are unchanged.
-        """
-        w = self.w
-        if removed is not None and removed.any():
-            w = np.where(removed[self.src] | removed[self.dst], 0.0, w)
-        taint = self.seed.astype(float)
-        w_in = np.bincount(self.dst, weights=w, minlength=self.n)
-        for _ in range(self.iters):
-            t_in = np.bincount(self.dst, weights=w * taint[self.src], minlength=self.n)
-            taint = np.divide(t_in, w_in, out=np.zeros(self.n), where=w_in > 0)
-            taint[self.seed] = 1.0
-            if removed is not None:
-                taint[removed] = 0.0
-        flow = w * taint[self.src]
-        tainted_in = np.bincount(self.dst, weights=flow, minlength=self.n)
-        return taint, tainted_in, flow.sum()
+    def propagate(self, removed=None):
+        if removed is None:
+            if self._baseline is None:
+                self._baseline = self._simulate(trace=True)
+            share, received, total, _ = self._baseline
+        else:
+            share, received, total, _ = self._simulate(removed)
+        return share.copy(), received.copy(), total
+
+    def edge_trace(self):
+        """Per-edge amount supported by the chronological accounting assumptions."""
+        self.propagate()
+        result = self.edges[["src", "dst", "sum_kzt", "n_tx"]].copy()
+        result["tainted_kzt"] = self._baseline[3]
+        result["taint_share"] = np.divide(result.tainted_kzt, result.sum_kzt,
+                                          out=np.zeros(len(result)), where=result.sum_kzt > 0)
+        return result
 
     def block_impact(self) -> np.ndarray:
-        """Доля всего меченого потока, которая исчезает, если заблокировать один узел."""
+        """Relative marked transfer volume change after removing one node.
+
+        This counterfactual reruns the accounting model; a negative value is
+        possible when removal reduces unmarked dilution elsewhere. It is not
+        a prediction of prevented loss or participants' adaptive behaviour.
+        """
         _, _, total = self.propagate()
         impact = np.zeros(self.n)
         if total <= 0:

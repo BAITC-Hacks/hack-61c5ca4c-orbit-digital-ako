@@ -1,4 +1,4 @@
-"""Finite-horizon explanations and strict submission contract regressions."""
+"""Chronological explanations and strict submission contract regressions."""
 
 import sys
 from pathlib import Path
@@ -16,13 +16,14 @@ from mg.taint import TaintModel
 from run import explain_priority
 
 
-def test_seed_state_is_not_incoming_fraction():
+def test_seed_origin_marking_is_not_incoming_fraction():
     # Seed 1 receives 25 from seed 2 and 75 from an unseeded source.
     edges = pd.DataFrame({"src": [2, 3, 1], "dst": [1, 1, 4], "sum_kzt": [25., 75., 100.]})
+    tx = edges.assign(date=pd.to_datetime(["2026-07-01", "2026-07-01", "2026-07-02"]))
     nodes = pd.DataFrame({"is_seed": [True, True, False, False]}, index=[1, 2, 3, 4])
-    model = TaintModel(edges, nodes, 2)
+    model = TaintModel(edges, nodes, 2, tx=tx)
     state, incoming, total = model.propagate()
-    assert state[0] == 1.0
+    assert state[0] == .25
     assert incoming[0] == 25.0
     assert total == incoming.sum() == 125.0
     row = pd.Series({"evidence": "Получил 100 KZT.", "tainted_in_kzt": incoming[0],
@@ -30,21 +31,24 @@ def test_seed_state_is_not_incoming_fraction():
     why = explain_priority(row, 2, 2)
     assert "25.00 KZT из 100.00 KZT" in why and "25.0%" in why
     assert "100.0%" not in why
-    assert "2 итераций" in why and "не уникальные средства" in why
+    assert "итераций" not in why and "не уникальные средства" in why
+    assert "Хронологический расчёт" in why and "FIFO" in why
     assert "порядок переводов в один день неизвестен" in why
 
 
-def test_returned_incoming_uses_final_state_edge_flow():
+def test_returned_incoming_follows_dates_and_ignores_legacy_iteration_count():
     edges = pd.DataFrame({"src": [1, 2, 3], "dst": [2, 3, 4], "sum_kzt": [100., 100., 100.]})
+    tx = edges.assign(date=pd.to_datetime(["2026-07-01", "2026-07-02", "2026-07-03"]))
     nodes = pd.DataFrame({"is_seed": [True, False, False, False]}, index=[1, 2, 3, 4])
-    model = TaintModel(edges, nodes, 1)
+    model = TaintModel(edges, nodes, 1, tx=tx)
     state, incoming, total = model.propagate()
-    np.testing.assert_array_equal(state, [1., 1., 0., 0.])
-    np.testing.assert_array_equal(incoming, [0., 100., 100., 0.])
-    assert total == 200.
-    # Node 3 illustrates why incoming fraction must not reuse state_H[3].
-    assert incoming[2] / 100. == 1. and state[2] == 0.
-    assert TaintModel(edges, nodes, 2).propagate()[2] == 300.
+    np.testing.assert_array_equal(state, [0., 1., 1., 1.])
+    np.testing.assert_array_equal(incoming, [0., 100., 100., 100.])
+    assert total == 300.
+    assert TaintModel(edges, nodes, 2, tx=tx).propagate()[2] == total
+    # Reverse the date order, keeping the same aggregate edges: the chain fails.
+    reversed_tx = tx.assign(date=tx.date.iloc[::-1].to_numpy())
+    assert TaintModel(edges, nodes, 2, tx=reversed_tx).propagate()[2] == 100.
 
 
 def test_no_observed_incoming_has_no_percentage():
@@ -53,12 +57,13 @@ def test_no_observed_incoming_has_no_percentage():
     assert "доля модельного входа не определена" in explain_priority(row, 8, 2)
 
 
-def test_temporal_proxy_does_not_claim_amount_matching_or_same_day_order():
+def test_fast_transit_excludes_unknown_same_day_order_and_caps_covered_amounts():
     tx = pd.DataFrame({"src": [1, 2, 2], "dst": [2, 3, 4],
                        "date": pd.to_datetime(["2026-07-01"] * 3),
                        "sum_kzt": [5000., 500000., 500000.]})
-    # Kept deliberately as a date-proximity feature, not a conserved cash flow.
-    assert temporal_features(tx, 2).loc[2, "fast_share"] == 1.
+    assert temporal_features(tx, 2).loc[2, "fast_share"] == 0.
+    tx.loc[tx.src == 2, "date"] = pd.Timestamp("2026-07-02")
+    assert temporal_features(tx, 2).loc[2, "fast_share"] == pytest.approx(.005)
 
 
 @pytest.fixture

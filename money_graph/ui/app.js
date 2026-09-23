@@ -59,7 +59,7 @@
   }
   function requestName(type) {
     return {
-      next_hop_outgoing: "Исходящие 5-го хопа",
+      next_hop_outgoing: "Исходящие " + ((D.summary.max_depth ?? 4) + 1) + "-го хопа",
       incoming_external: "Внешние входящие",
       seed_no_outgoing: "Seed без исходящих"
     }[type] || type;
@@ -72,6 +72,10 @@
     $("metric-clusters").textContent = number(D.summary.clusters);
     $("request-count").textContent = number(D.requests.length);
     document.querySelector("#tab-clusters .count").textContent = number(D.clusters.length) + " групп";
+    if(D.summary.taint_model && !$("taint-edges-download")) {
+      const link=text(document.querySelector(".app-footer div"),"a","","Поток по связям CSV");
+      link.id="taint-edges-download";link.href="taint_edges.csv";link.download="taint_edges.csv";
+    }
     const select = $("role-filter");
     Object.keys(D.roleRu).forEach(role => {
       const option = document.createElement("option");
@@ -184,11 +188,16 @@
     const rows = D.res;
     const chart = $("impact-chart");
     clear(chart);
+    const list = $("impact-list");
+    clear(list);
+    if(!rows.length) {text(chart,"p","help","Нет сценарных данных.");renderTaintAssumptions(list);return;}
     const width = 360, height = 184, left = 33, top = 16, right = 10, bottom = 28;
-    const x = n => left + (width - left - right) * n / (rows.length - 1);
-    const y = p => top + (height - top - bottom) * (1 - p);
+    const largest = Math.max(1,...rows.flatMap(row=>[row.tainted_flow_left,row.random_flow_left]).filter(Number.isFinite));
+    const yMax = Math.ceil(largest*10)/10;
+    const x = n => left + (width - left - right) * n / Math.max(1,rows.length - 1);
+    const y = p => top + (height - top - bottom) * (1 - p/yMax);
     const root = svg("svg", { viewBox: "0 0 360 184", "aria-hidden": "true" });
-    [0, .5, 1].forEach(level => {
+    [0, yMax/2, yMax].forEach(level => {
       root.appendChild(svg("line", { x1: left, x2: width - right, y1: y(level), y2: y(level), stroke: "#dce4e8", "stroke-width": 1 }));
       const label = svg("text", { x: 0, y: y(level) + 4, fill: "#5c6c77", "font-size": 10 });
       label.textContent = Math.round(level * 100) + "%";
@@ -204,8 +213,6 @@
     const legend = text(chart, "div", "legend");
     text(legend, "span", "", "● Топ по приоритету").style.color = "#15658a";
     text(legend, "span", "", "● Случайные узлы").style.color = "#a96b2d";
-    const list = $("impact-list");
-    clear(list);
     [5, 10, 20, 30].forEach(n => {
       const r = rows.find(row => row.n_blocked === n);
       if (!r) return;
@@ -214,6 +221,14 @@
       text(row, "span", "", percent(r.tainted_flow_left) + " осталось");
       text(row, "span", "", percent(r.random_flow_left) + " случайно");
     });
+    renderTaintAssumptions(list);
+  }
+  function renderTaintAssumptions(parent) {
+    if(!Array.isArray(D.summary.taint_assumptions) || !D.summary.taint_assumptions.length) return;
+    const details=text(parent,"details","help");
+    text(details,"summary","","Допущения расчёта потока");
+    const list=text(details,"ul");
+    D.summary.taint_assumptions.forEach(assumption=>text(list,"li","",assumption));
   }
 
   function neighbours(gid, depth, direction) {
@@ -305,8 +320,8 @@
         percent(node.fs) + ". Правило: диапазон " + Math.round(c.transit_pt_low * 100) + "–" +
         Math.round(c.transit_pt_high * 100) + "% либо быстрый поток ≥ " +
         Math.round(c.transit_min_fast_share * 100) + "% при передаче ≥ 50% видимого входа.";
-      case "terminal": return "Исходящих ≥ " + number(D.summary.min_tx_kzt || 5000) + " KZT нет на полностью наблюдаемом хопе " + node.d + ".";
-      case "truncated": return "Хоп 4: исходящие не входили в выгрузку. Этот узел нельзя считать конечным получателем.";
+      case "terminal": return "В выборке нет исходящих ≥ " + number(D.summary.min_tx_kzt ?? 5000) + " KZT на хопе " + node.d + ". Переводы ниже порога и за пределы банка не наблюдаются.";
+      case "truncated": return "Хоп " + (D.summary.max_depth ?? 4) + ": исходящие не входили в выгрузку. Этот узел нельзя считать конечным получателем.";
       default: return "Порогов других ролей узел не достиг; для seed без связей требуется дополнительная выгрузка.";
     }
   }
@@ -392,6 +407,11 @@
     const weights = Object.entries(D.weights).map(([key, value]) =>
       weightNames[key] + " " + Math.round(value * 100) + "%").join(", ");
     text(details, "p", "help", "Взвешенные ранги: " + weights + ". Итог нормирован к 0–1.");
+    if(node.priority_parts && Object.values(node.priority_parts).every(value=>value!=null && Number.isFinite(value))) {
+      text(details,"p","help","Вклад признаков в приоритет этого узла (сумма с учётом округления):");
+      const parts=text(details,"div","kv");
+      Object.entries(node.priority_parts).forEach(([key,value])=>detailRow(parts,weightNames[key] || key,value.toFixed(3)));
+    }
 
     const connections = text(card, "section", "card-section");
     text(connections, "h3", "", "Крупнейшие связи");
@@ -404,8 +424,10 @@
     const requests = requestsByGid.get(node.id) || [];
     if (requests.length) requests.forEach(r => text(model, "p", "attention", r.reason));
     else text(model, "p", "attention", "Сверить роль и крупные связи с полной банковской выпиской и данными вне этой выборки.");
-    text(model, "p", "help", "Модельное исключение узла уменьшает прослеживаемый поток на " +
-      percent(node.bi, 1) + ". Это сценарий по наблюдаемым связям, не доказательство вины.");
+    const impact=node.bi===null || node.bi===undefined ? "нет данных" :
+      (node.bi<0 ? "рост на " + percent(-node.bi,1) : "снижение на " + percent(node.bi,1));
+    text(model, "p", "help", "Изменение прослеживаемого потока при исключении узла: " +
+      impact + ". Пересчитывается смешивание средств; это сценарий по наблюдаемым связям, не прогноз реальной блокировки и не доказательство вины.");
   }
 
   function selectNode(gid, preserveGraph = false) {

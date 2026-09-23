@@ -1,22 +1,29 @@
 """Integration: an unguessable case ID never replaces ownership authorization."""
+import importlib
 import json
 import shutil
 import sys
 from pathlib import Path
 
+import dotenv
 import pytest
 from fastapi.testclient import TestClient
 
 PROJECT = Path(__file__).resolve().parents[1] / "money_graph"
 sys.path.insert(0, str(PROJECT))
-import server
 from mg.auth import AuthStore
 
+server = None
 PASSWORD = "Isolated-test-password-41!"
+EXPORT_NAMES = ("nodes_roles.csv", "clusters.csv", "top_nodes.csv", "requests.csv", "resilience.csv", "taint_edges.csv")
 
 
 @pytest.fixture
 def environment(tmp_path, monkeypatch):
+    global server
+    monkeypatch.setenv("MONEYGRAPH_STATE_DIR", str(tmp_path / "initial-state"))
+    monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: False)
+    server = importlib.import_module("server")
     store = AuthStore(tmp_path / "auth.sqlite3")
     # The middleware closes over the same store object; change only its DB path.
     monkeypatch.setattr(server.app.state.auth_store, "db_path", store.db_path)
@@ -43,7 +50,7 @@ def client_for(name=None):
 
 
 @pytest.mark.parametrize("suffix", ["graph", "transactions?src=101&dst=202",
-    *["exports/" + name for name in sorted(server.EXPORTS)],
+    *["exports/" + name for name in EXPORT_NAMES],
     "documents", "reports", "audit", "developer"])
 def test_case_id_does_not_grant_access(environment, suffix):
     _, case_id, _ = environment

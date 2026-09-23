@@ -24,6 +24,12 @@ function showLogin(error="") {
   state.loadVersion++;state.txVersion++;state.loadController?.abort();state.network?.destroy();state.network=null;
   state.data=null;state.nodes.clear();state.incoming.clear();state.outgoing.clear();state.workspaces.clear();selections.clear();
   state.positions={};state.hidden.clear();state.extras.clear();state.pinned.clear();state.selected=null;state.focus=null;state.tx=null;state.caseId="demo";
+  state.loading=false;
+  assistant.statusVersion++;assistant.configured=false;assistant.checked=false;assistant.availabilityError=false;
+  resetAssistant(true);
+  for(const id of ["assistant-result","assistant-error","assistant-availability","assistant-selection","assistant-selection-hint"]) clear($(id));
+  $("assistant-panel").inert=true;
+  $("workspace").inert=true;
   for(const id of ["list","node-card","case-select","report-list","report-selection","document-list","ask-sources","ask-answer","audit-list","user-list","user-message","developer-info","selected-evidence","graph-heading","graph-subtitle","case-overview","downloads","transaction-rows","transaction-pair","status","model-chart","graph-count","graph-legend","data-notice","m-nodes","m-edges","m-seeds","m-transactions","m-clusters","m-period","m-boundary"]) clear($(id));
   document.querySelectorAll("details[open]").forEach(details=>details.open=false);
   for(const dialog of document.querySelectorAll("dialog[open]")) dialog.close();
@@ -38,11 +44,14 @@ window.addEventListener("auth-expired",()=>showLogin("Сессия заверш�
 async function enterWorkspace(info,expectedGeneration=session.generation) {
   if(expectedGeneration!==session.generation)return;
   session.generation++;session.user=info.user;session.csrf=info.csrf_token;workspaceVersion++;
+  const generation=session.generation;
   $("login-form").reset();$("login-screen").hidden=true;$("application").hidden=false;
   $("account-name").textContent=info.user.username+(info.user.role==="admin"?" · администратор":" · аналитик");
   document.querySelectorAll("[data-admin]").forEach(item=>item.hidden=info.user.role!=="admin");
   await setView("investigation",false);
+  if(generation!==session.generation)return;
   if(info.user.must_change_password) {$("password-dialog").showModal();return;}
+  loadAssistantStatus();
   await loadCases(new URLSearchParams(location.search).get("case")||"demo");
 }
 $("login-form").addEventListener("submit",async event=>{

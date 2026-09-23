@@ -57,6 +57,11 @@ def write_viewer(path, df, edges, clusters, top, res, summary, vis_js, requests,
         "ti": _num(row.tainted_in_kzt, 0), "bi": _num(row.block_impact, 4),
         "po": _num(row.p_onward, 3), "fs": _num(row.fast_share, 2),
         "sources": int(row.seed_sources),
+        "priority_parts": {name: _num(row.get(f"priority_{name}", 0), 8)
+                           for name in cfg["priority_weights"]},
+        "matched_out_kzt": _num(row.get("matched_out_kzt", 0), 0),
+        "unmatched_out_kzt": _num(row.get("unmatched_out_kzt", 0), 0),
+        "same_day_overlap_kzt": _num(row.get("same_day_overlap_kzt", 0), 0),
     } for gid, row in df.iterrows()]
     graph_edges = [[str(row.src), str(row.dst), float(row.sum_kzt), int(row.n_tx)]
                    for row in edges.itertuples(index=False)]

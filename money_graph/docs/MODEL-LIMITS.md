@@ -16,52 +16,59 @@ Both `nodes_roles.csv` and `top_nodes.csv` export:
   boundary node is peripheral.
 - `is_truncated`: boolean; true exactly when role_detail is truncated. CSV
   serializes it as True/False; parse it as a boolean, not string truthiness.
-- `taint_iterations`: configured propagation horizon.
+- `taint_iterations`: legacy compatibility field, now 0. The configured iteration
+  count is ignored by the chronological model.
 
 `nodes_roles.csv` also exports:
 
 - `tainted_in_kzt`: modeled incoming edge-flow amount defined below.
 - `taint_share`: tainted_in_kzt / in_kzt, using observed incoming as denominator;
   blank/null when in_kzt is zero. This fixes the former propagation-state meaning.
-- `taint_state_share`: propagation state after H updates. Seed states are forced
-  to 1; this is not the fraction of observed incoming funds traced to seeds.
+- `taint_state_share`: deprecated compatibility alias of `taint_share`, also
+  blank/null when observed incoming is zero. It is not a propagation state.
 
 Roles used by clustering, request generation, priority weighting and the offline
 viewer stay internal, including truncated. Summary role counts remain internal.
 The server/workspace CSV consumer must use role_detail to retain that distinction.
 
-## Finite-step edge-flow model
+## Chronological edge-flow model
 
-The existing algorithm is retained. Start with seed state 1 and other states 0.
-Perform H updates from `config.json` taint_iterations (currently 8), forcing seed
-state to 1 after each update. Then define each modeled edge flow as its observed
-amount times its source's state after H updates. Incoming amount is the sum of
-these same final edge flows entering the node; total flow is their sum.
+Transactions are processed in daily batches. Outgoing transfers use only the
+balance available from previous days; incoming transfers are credited afterwards.
+Marked and unmarked amounts mix proportionally. A non-seed cannot spend more
+marked money than its available marked balance. Any shortfall is treated as
+unknown unmarked funding; later receipts do not retroactively fund earlier debits.
+
+All seed outflows are marked by model assumption, including new funding of unknown
+origin. Incoming amounts and fractions for seeds still use their observed inflows.
+`taint_edges.csv` aggregates the chronological marked transfers for each edge.
 
 Incoming fractions must therefore be calculated from incoming amounts and observed
 incoming totals, never from the destination's propagation state. Explanations
 show both amounts to two decimals and their ratio to one percentage decimal.
 
-This is a finite-horizon estimate, without a convergence guarantee. A diagnostic
-on the supplied data gave about 253.1m KZT at H=8 and 310.6m at H=16. Changes to
-H may change scores, rankings and removal effects. H is exported in the summary
-and both node CSVs; these diagnostics do not establish a preferred horizon.
+Dates do not establish ordering within a day. Same-day onward transfers are not
+treated as confirmed continuations of incoming funds. Opening balances and
+external funding are unknown. These assumptions are exported in `summary.json`
+and displayed in the interface. Old finite-iteration totals are superseded;
+use the current generated outputs for amounts and rankings.
 
 Flow is summed over edges, not unique funds, account balances, recovered money or
 proven criminal proceeds. Money moving repeatedly can be counted repeatedly.
-Aggregation ignores transaction chronology and opening balances. Removing nodes
-recomputes mixing denominators; some modeled removal effects can be negative.
+Removing nodes reruns the chronological model; some modeled removal effects can
+be negative because removing unmarked funding changes the mixing proportions.
 The removal comparison is a scenario under these assumptions, not measured AML
 effectiveness. The onward-model AUC evaluates an observed-outgoing proxy, not
 role classification or performance on unobserved fourth-hop outgoing transfers.
 
-## Temporal proxy
+## Amount-covered temporal proxy
 
-fast_share is the share of outgoing amount with any preceding incoming date no
-more than fast_lag_days earlier. It does not allocate incoming amounts to outgoing
-transactions. A 5,000 KZT incoming transfer can therefore precede 1m KZT outgoing
-and yield fast_share=1. Dates without timestamps cannot establish ordering within
-the same day. Treat this as date proximity, not proof of forwarded funds.
+`fast_share` is the fraction of outgoing amount covered by available prior-day
+receipts within `fast_lag_days`. FIFO consumes each incoming amount at most once;
+receipts outside the window can fund an outflow but do not count as fast. Same-day
+receipts cannot fund that day's outflows. A 5,000 KZT receipt alone cannot cover
+a later 1m KZT outflow in full. Matched, unmatched and same-day amounts are exported
+as diagnostics. FIFO is a matching assumption, not proof of the actual money path.
 
 ## Verification boundary
 

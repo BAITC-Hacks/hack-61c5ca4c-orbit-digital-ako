@@ -236,7 +236,8 @@ def test_retrieval_current_csv_and_honest_rag_status(case):
     assert any("0.9900" in source["excerpt"] for source in result["sources"])
     missing = case.client.post(BASE + "/ask", json={"question": "Подключён RAG?"}).json()
     assert missing["sources"] == []
-    assert "LLM не подключена" in missing["answer"]
+    assert "Ответ НЕ сгенерирован LLM" in missing["answer"]
+    assert "без обращения к ИИ" in missing["answer"]
     assert "Совпадений" in missing["answer"]
     case.rows[0]["evidence"] = "Новый термин: кварц"
     write_csv(case.out / "nodes_roles.csv", case.rows)

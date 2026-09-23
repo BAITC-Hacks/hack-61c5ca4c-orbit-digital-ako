@@ -82,6 +82,34 @@
     </section>
     <details class="panel inspector" id="inspector-panel"><summary class="panel-head">Полная карточка клиента · метрики и исходные переводы</summary><div id="node-card" class="card-content"><p class="muted">Выберите узел на графе или в списке.</p></div></details>
   </main>
+  <section id="assistant-panel" class="panel assistant-panel" aria-labelledby="assistant-title">
+    <div class="panel-head"><span class="kicker">ПОМОЩНИК АНАЛИТИКА</span><h2 id="assistant-title">Разобрать узлы и связи</h2><p>Добавьте до пяти узлов из карточек. Готовые действия работают локально и не обращаются к OpenAI.</p></div>
+    <div class="assistant-body">
+      <div class="assistant-controls">
+        <div class="assistant-selection-head"><strong>Узлы для разбора <span id="assistant-count">0 / 5</span></strong><button id="assistant-add" class="button" type="button" disabled>+ Выбранный узел</button></div>
+        <div id="assistant-selection" class="assistant-selection" aria-label="Узлы для разбора"></div>
+        <p id="assistant-selection-hint" class="muted">Выберите узел на схеме или в списке и добавьте его сюда.</p>
+        <div class="assistant-presets" aria-label="Готовые действия">
+          <button class="button" type="button" data-assistant-mode="explain" disabled>Объяснить приоритет</button>
+          <button class="button" type="button" data-assistant-mode="common_recipients" disabled>Общие получатели</button>
+          <button class="button" type="button" data-assistant-mode="paths" disabled>Путь от первого ко второму</button>
+          <button class="button" type="button" data-assistant-mode="missing_data" disabled>Каких данных не хватает?</button>
+        </div>
+        <div id="assistant-availability" class="assistant-availability" role="status">Проверяем доступность ИИ-помощника…</div>
+        <form id="assistant-form" hidden>
+          <label for="assistant-question">Свой вопрос по выбранным узлам</label>
+          <textarea id="assistant-question" rows="3" maxlength="1000" placeholder="Почему эти узлы связаны и что проверить дальше?" required aria-describedby="assistant-sharing"></textarea>
+          <small id="assistant-sharing">При отправке вопроса выбранные gid, вопрос и найденные факты о связях будут переданы OpenAI. Вызов использует оплачиваемый API.</small>
+          <button id="assistant-submit" class="button primary" type="submit" disabled>Спросить ИИ</button>
+        </form>
+      </div>
+      <div class="assistant-result-wrap">
+        <div id="assistant-progress" class="assistant-progress" role="status" hidden>Проверяем связи выбранных узлов…</div>
+        <div id="assistant-error" class="error" role="alert" hidden></div>
+        <div id="assistant-result" class="assistant-result" aria-live="polite"><p class="muted">Здесь появятся объяснение и ссылки на узлы. Для пути выберите ровно два узла: сначала отправителя, затем получателя.</p></div>
+      </div>
+    </div>
+  </section>
   <details class="advanced-results"><summary>Модельные сценарии и CSV-выгрузки</summary><section class="lower" id="results">
     <div class="panel model"><div class="panel-head"><span class="kicker">МОДЕЛЬНЫЙ СЦЕНАРИЙ</span><h2>Что меняется при исключении топ узлов</h2></div><div id="model-chart" class="model-chart"></div><small>Сценарий по наблюдаемому графу; это не прогноз реальной блокировки.</small></div>
     <div class="panel exports"><div class="panel-head"><span class="kicker">ПРОДОЛЖИТЬ ПРОВЕРКУ</span><h2>Выгрузки выбранного кейса</h2></div><div id="downloads" class="download-list"></div><small>CSV содержат полный результат анализа, включая узлы, не показанные на схеме.</small></div>
@@ -92,10 +120,10 @@
     <div class="platform-columns"><form id="report-form" class="panel sheet"><h2>Новый отчёт</h2><label for="report-title">Название</label><input id="report-title" maxlength="120" required value="План углублённой проверки"><div class="selection-head"><h3>Выбранные клиенты</h3><button id="select-top" class="button" type="button">Добавить топ-5</button></div><div id="report-selection"></div><label for="report-notes">Заметка аналитика</label><textarea id="report-notes" rows="5" maxlength="5000" placeholder="Что проверить и какие сведения запросить"></textarea><button class="button primary" type="submit">Сохранить версию отчёта</button><p id="report-message" role="status"></p></form><div class="panel sheet"><h2>Сохранённые версии</h2><p>HTML включает схему и таблицу; его можно распечатать или сохранить в PDF из браузера. MD и JSON — для дальнейшей обработки.</p><div id="report-list"></div><details><summary>История действий</summary><div id="audit-list"></div></details></div></div>
   </section>
   <section data-page="knowledge" class="platform-page" hidden>
-    <div class="page-heading"><div><span class="kicker">ОСНОВАНИЯ, А НЕ ДОГАДКИ</span><h1>Документы и поиск по кейсу</h1><p>Локальный поиск по метрикам и вашим документам с указанием источников. Внешняя языковая модель не подключена.</p></div></div>
+    <div class="page-heading"><div><span class="kicker">ОСНОВАНИЯ, А НЕ ДОГАДКИ</span><h1>Документы и поиск по кейсу</h1><p>Этот раздел ищет по метрикам и вашим документам локально, без обращения к ИИ. Помощник по графу доступен отдельно в разделе «Расследование».</p></div></div>
     <div class="platform-columns"><div class="panel sheet"><h2>Найти основания</h2><form id="ask-form"><label for="ask-question">Вопрос или gid</label><textarea id="ask-question" rows="3" maxlength="2000" required placeholder="Например: почему клиент из топа требует проверки?"></textarea><button class="button primary" type="submit">Найти в источниках</button></form><div id="ask-answer" aria-live="polite"></div><div id="ask-sources"></div></div><div class="panel sheet"><h2>Документы моего кейса</h2><p>Текстовые документы TXT и Markdown, до 2 МБ. PDF/DOCX пока не поддерживаются. Документы не отправляются во внешние ИИ-сервисы.</p><form id="document-form"><label for="document-file">Добавить документ</label><input id="document-file" name="file" type="file" accept=".txt,.md" required><button class="button" type="submit">Загрузить документ</button><p id="document-message" role="status"></p></form><div id="document-list"></div></div></div>
   </section>
-  <section data-page="developer" class="platform-page" hidden><div class="page-heading"><div><h1>Режим разработчика</h1><p>Параметры расчёта и диагностика локального поиска. Этот режим доступен администраторам; он не открывает чужие кейсы.</p></div></div><div class="panel sheet"><h2>Состояние контура RAG</h2><p>Извлечение источников работает локально. Генерация LLM выключена: ключи и разрешение на передачу данных не настроены. Подписка в браузере не является API-ключом приложения.</p><pre id="developer-info"></pre></div></section>
+  <section data-page="developer" class="platform-page" hidden><div class="page-heading"><div><h1>Режим разработчика</h1><p>Параметры расчёта и диагностика локального поиска. Этот режим доступен администраторам; он не открывает чужие кейсы.</p></div></div><div class="panel sheet"><h2>Состояние локального поиска</h2><p>Источники из документов извлекаются локально, без генерации текста внешней моделью. Подключение ИИ-помощника по графу показано отдельно в разделе «Расследование»; документы из поиска ему не передаются.</p><pre id="developer-info"></pre></div></section>
   <section data-page="admin" class="platform-page" hidden><div class="page-heading"><div><h1>Учётные записи</h1><p>Только администратор создаёт пользователей. Пароль передайте лично, по защищённому каналу.</p></div></div><div class="platform-columns"><form id="user-form" class="panel sheet"><h2>Выдать доступ</h2><label for="new-username">Логин</label><input id="new-username" name="username" minlength="3" maxlength="64" pattern="[A-Za-z0-9_.-]+" required autocomplete="off"><label for="new-role">Роль</label><select id="new-role" name="role"><option value="analyst">Аналитик</option><option value="admin">Администратор</option></select><button type="submit" class="button primary">Создать пользователя</button><div id="user-message" role="status"></div></form><div class="panel sheet"><h2>Пользователи платформы</h2><div id="user-list"></div></div></div></section>
   </div>
   <dialog id="password-dialog"><form id="password-form"><div class="dialog-head"><h2>Сменить пароль</h2><button id="password-close" type="button" class="icon-button" aria-label="Закрыть">×</button></div><label>Текущий пароль<input name="current_password" type="password" autocomplete="current-password" required></label><label>Новый пароль · минимум 12 символов<input name="new_password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required></label><button class="button primary" type="submit">Сменить и войти заново</button><p id="password-message" role="status"></p></form></dialog>

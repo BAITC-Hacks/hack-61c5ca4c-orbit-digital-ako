@@ -31,15 +31,18 @@ def pct(s: pd.Series) -> pd.Series:
 
 
 def explain_priority(r, iterations: int, lag_days: int) -> str:
-    # The denominator is the observed incoming amount, never the forced seed state.
+    """Explain the chronological model; iterations is an unused legacy argument."""
+    # The denominator is the observed incoming amount, never seed-origin marking.
     incoming = (f" Модельный вход от seed: {r.tainted_in_kzt:.2f} KZT из "
                 f"{r.in_kzt:.2f} KZT наблюдаемого входа "
                 f"({r.tainted_in_kzt / r.in_kzt:.1%})." if r.in_kzt > 0 else
                 " Наблюдаемого входа нет; доля модельного входа не определена.")
-    return (f"{r.evidence}{incoming} Исключение узла: снижение модельного потока "
-            f"{r.block_impact * 100:.1f}%. {iterations} итераций; поток по рёбрам, "
-            "не уникальные средства; результат чувствителен к числу итераций. "
-            f"Близость переводов ≤{lag_days} дн — временной прокси без сопоставления сумм; "
+    impact = (f"Исключение снижает модельный поток на {r.block_impact * 100:.1f}%."
+              if r.block_impact >= 0 else
+              f"При исключении модельный поток растёт на {-r.block_impact * 100:.1f}% из-за изменения смешивания.")
+    return (f"{r.evidence}{incoming} {impact} Хронологический расчёт по дням; поток по рёбрам, "
+            "не уникальные средства. "
+            f"Быстрый транзит: исходящие суммы, покрытые поступлениями предыдущих {lag_days} дн по FIFO; "
             "порядок переводов в один день неизвестен. "
             f"Кластер {r.cluster_id}. Гипотеза для проверки, не вывод о вине.")
 
@@ -59,14 +62,17 @@ def analyze(data_dir: Path, out: Path, cfg: dict):
     df = compute_features(G, edges, nodes, tx, cfg)
     log(f"метрики: {len(df)} узлов, {len(edges)} рёбер, {len(tx)} транзакций")
 
-    tm = TaintModel(edges, df, cfg["taint_iterations"])
+    tm = TaintModel(edges, df, cfg.get("taint_iterations"), tx=tx)
     taint, tainted_in, total_flow = tm.propagate()
-    df["taint_state_share"] = taint
     df["tainted_in_kzt"] = tainted_in
     df["taint_share"] = df.tainted_in_kzt / df.in_kzt.where(df.in_kzt > 0)
-    df["taint_iterations"] = cfg["taint_iterations"]
+    # Preserve the upstream CSV columns without pretending an iterative state
+    # exists: the former state column is now a documented incoming-share alias.
+    df["taint_state_share"] = df.taint_share
+    df["taint_iterations"] = 0
     df["block_impact"] = tm.block_impact()
-    log(f"модельный поток по рёбрам ({tm.iters} итераций): {kzt(total_flow)} KZT; не уникальные средства")
+    tm.edge_trace().to_csv(out / "taint_edges.csv", index=False)
+    log(f"хронологический модельный поток по рёбрам: {kzt(total_flow)} KZT; не уникальные средства")
 
     df["p_onward"], cutoff_report = estimate_onward(df, cfg["period_end"], cfg["max_depth"])
     log(f"обрезанные узлы: модель на {cutoff_report['train_nodes']} узлах, AUC={cutoff_report['cv_auc']}")
@@ -75,17 +81,24 @@ def analyze(data_dir: Path, out: Path, cfg: dict):
     df = df.join(roles)
 
     w = cfg["priority_weights"]
-    raw = (w["tainted_in"] * pct(df.tainted_in_kzt.where(df.tainted_in_kzt > 0)) +
-           w["block_impact"] * pct(df.block_impact.where(df.block_impact > 0)) +
-           w["role"] * df.role.map(cfg["role_weight"]) +
-           w["betweenness"] * pct(df.betweenness.where(df.betweenness > 0)) +
-           w["seed_sources"] * pct(df.seed_sources.where(df.seed_sources > 0)) +
-           w["turnover"] * pct(df.turnover.where(df.turnover > 0)))
+    factors = {
+        "tainted_in": pct(df.tainted_in_kzt.where(df.tainted_in_kzt > 0)),
+        "block_impact": pct(df.block_impact.where(df.block_impact > 0)),
+        "role": df.role.map(cfg["role_weight"]),
+        "betweenness": pct(df.betweenness.where(df.betweenness > 0)),
+        "seed_sources": pct(df.seed_sources.where(df.seed_sources > 0)),
+        "turnover": pct(df.turnover.where(df.turnover > 0)),
+    }
+    contributions = pd.DataFrame({f"priority_{name}": w[name] * values
+                                  for name, values in factors.items()}, index=df.index)
+    raw = contributions.sum(axis=1)
+    contributions = (contributions / raw.max()).fillna(0) if raw.max() > 0 else contributions * 0
+    df = df.join(contributions.round(8))
     df["priority_score"] = (raw / raw.max()).fillna(0).round(4) if raw.max() > 0 else 0.0
 
     labels = cluster(G, cfg)
     df["cluster_id"] = labels
-    clusters = cluster_table(edges, df, df[["role"]], labels, df.priority_score)
+    clusters = cluster_table(edges, df, df[["role"]], labels, df.priority_score, cfg)
     log(f"кластеры: {clusters.cluster_id.nunique()} (Louvain, seed={cfg['louvain_seed']})")
 
     # ---------- nodes_roles.csv
@@ -96,7 +109,8 @@ def analyze(data_dir: Path, out: Path, cfg: dict):
     nr = df.reset_index()[["gid", "role", "role_base", "role_detail", "is_truncated", "role_score", "cluster_id", "priority_score", "evidence",
                            "depth", "is_seed", "in_deg", "out_deg", "in_kzt", "out_kzt", "pass_through",
                            "fast_share", "tainted_in_kzt", "taint_share", "taint_state_share", "taint_iterations", "block_impact", "betweenness",
-                           "seed_sources", "p_onward", "cycles_le4"]]
+                           "seed_sources", "p_onward", "cycles_le4", "median_lag", "matched_out_kzt",
+                           "unmatched_out_kzt", "same_day_overlap_kzt", *contributions.columns]]
     nr["role_score"] = nr.role_score.round(3)
     nr["role"] = nr.role_base
     nr.sort_values("priority_score", ascending=False).to_csv(out / "nodes_roles.csv", index=False)
@@ -108,7 +122,7 @@ def analyze(data_dir: Path, out: Path, cfg: dict):
                             "role_base": top.role_base, "role_detail": top.role_detail,
                             "is_truncated": top.is_truncated, "taint_iterations": top.taint_iterations,
                             "priority_score": top.priority_score,
-                            "why": top.apply(lambda r: explain_priority(r, tm.iters, cfg["fast_lag_days"]), axis=1)})
+                            "why": top.apply(lambda r: explain_priority(r, 0, cfg["fast_lag_days"]), axis=1)})
     top_out.to_csv(out / "top_nodes.csv", index=False)
 
     # ---------- requests.csv: чего не хватает и что запросить
@@ -116,7 +130,7 @@ def analyze(data_dir: Path, out: Path, cfg: dict):
     tr = df[df.role == "truncated"].assign(k=lambda d: d.p_onward * d.tainted_in_kzt).sort_values("k", ascending=False)
     for g, r in tr.iterrows():
         req.append((g, "next_hop_outgoing", round(float(r.k), 0),
-                    f"Выгрузить исходящие (5-й хоп): P(переводит дальше)={r.p_onward:.0%}, меченых {kzt(r.tainted_in_kzt)}"))
+                    f"Выгрузить исходящие ({cfg['max_depth'] + 1}-й хоп): P(переводит дальше)={r.p_onward:.0%}, меченых {kzt(r.tainted_in_kzt)}"))
     for g, r in df[df.role.isin(["coordinator", "consolidator"])].iterrows():
         req.append((g, "incoming_external", float(r.tainted_in_kzt),
                     f"Выгрузить входящие вне выборки и межбанк: {r.role}, приоритет {r.priority_score:.2f}"))
@@ -141,10 +155,21 @@ def analyze(data_dir: Path, out: Path, cfg: dict):
                "min_tx_kzt": cfg.get("min_tx_kzt", 5000),
                "roles": df.role.value_counts().to_dict(),
                "clusters": int(clusters.cluster_id.nunique()), "tainted_flow_kzt": round(float(total_flow)),
-               "taint_iterations": tm.iters,
-               "taint_flow_definition": "Sum of observed edge amounts times source state after H updates; not unique funds.",
-               "taint_horizon_caveat": "Finite-step estimate; no convergence claim. Results and removal effects depend on taint_iterations.",
-               "temporal_caveat": "Date proximity proxy without amount matching; same-day transaction order is unknown.",
+               "taint_model": "temporal_daily_balance",
+               "taint_iterations": 0,
+               "taint_state_share_definition": "Deprecated alias of taint_share: marked received amount / observed incoming amount; null with no incoming.",
+               "taint_flow_definition": "Chronological sum of marked transfer amounts under available-balance assumptions; not unique funds.",
+               "taint_horizon_caveat": "Uses all observed dates in order. The legacy taint_iterations setting is ignored; exported taint_iterations=0.",
+               "temporal_caveat": "FIFO amount matching uses strictly earlier calendar days; same-day transaction order is unknown.",
+               "fast_lag_days": cfg["fast_lag_days"],
+               "taint_assumptions": [
+                   "Переводы исходных клиентов считаются мечеными по определению; это допущение модели, не доказательство происхождения.",
+                   "Исходящие используют только поступления предыдущих дней; порядок переводов внутри дня неизвестен.",
+                   "Недостающая сумма считается неизвестным немеченым начальным остатком или внешним поступлением.",
+                   "Меченые и немеченые остатки смешиваются пропорционально; общий поток суммируется по переводам, а не по уникальным деньгам.",
+                   "Быстрый транзит использует FIFO: сначала расходуются более ранние поступления, каждое не более одного раза.",
+                   "Исключение узла пересчитывает смешивание; эффект может быть отрицательным и не является прогнозом предотвращённого ущерба.",
+               ],
                "cutoff_model": cutoff_report, "runtime_sec": round(time.time() - t0, 1)}
     (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 

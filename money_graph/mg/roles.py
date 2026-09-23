@@ -25,8 +25,8 @@ def assign_role(r: pd.Series, c: dict, bc_threshold: float):
     threshold = f"{c.get('min_tx_kzt', 5000):,}".replace(",", " ")
     if pd.isna(pt):
         pt_txt = "н/д"
-    elif pt > 1.3:
-        pt_txt = f"в {pt:.1f} раза больше полученного (есть невидимые поступления извне)".replace(".", ",")
+    elif pt > c["transit_pt_high"]:
+        pt_txt = f"в {pt:.1f} раза больше полученного (возможны начальный остаток/внешние поступления)".replace(".", ",")
     else:
         pt_txt = f"{pt * 100:.0f}%"
     bc_top = max(1, round((1 - r.bc_pct) * 100))
@@ -78,7 +78,7 @@ def assign_role(r: pd.Series, c: dict, bc_threshold: float):
             fs = 0.0 if pd.isna(r.fast_share) else r.fast_share
             return ("transit", score,
                     f"Признаки транзита: получил {kzt(r.in_kzt)}, передал {pt_txt}; "
-                    f"{fs * 100:.0f}% ушло в течение 2 дней после поступления{lag}.")
+                    f"{fs * 100:.0f}% исходящих покрыто поступлениями за предыдущие {c.get('fast_lag_days', 2)} дн.{lag}.")
 
     # 6. конечный получатель (только для полностью наблюдаемых хопов 0–3)
     if r.out_deg == 0 and r.depth < c.get("max_depth", 4) and (r.in_kzt >= c["terminal_min_in_kzt"] or r.in_deg >= c["terminal_min_in_deg"]):
@@ -95,7 +95,7 @@ def assign_role(r: pd.Series, c: dict, bc_threshold: float):
 
 def assign_roles(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     c = {**cfg["roles"], "max_depth": cfg.get("max_depth", 4),
-         "min_tx_kzt": cfg.get("min_tx_kzt", 5000)}
+         "min_tx_kzt": cfg.get("min_tx_kzt", 5000), "fast_lag_days": cfg["fast_lag_days"]}
     bc_threshold = df.betweenness.quantile(c["coordinator_min_betweenness_pct"])
     df = df.assign(bc_pct=df.betweenness.rank(pct=True))
     out = df.apply(lambda r: assign_role(r, c, bc_threshold), axis=1, result_type="expand")

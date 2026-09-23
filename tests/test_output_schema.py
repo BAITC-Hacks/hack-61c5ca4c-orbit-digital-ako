@@ -11,6 +11,7 @@ clusters.csv, top_nodes.csv по документированной схеме �
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -28,28 +29,70 @@ ROLES = {"consolidator", "transit", "distributor", "terminal", "coordinator", "p
 EXPECTED_N_NODES = 2248
 EVIDENCE_MAX_CHARS = 200
 TOP_NODES_MIN_ROWS = 20
-
-@pytest.fixture(scope="module")
-def output_dir(tmp_path_factory):
-    out = tmp_path_factory.mktemp("schema-output")
-    cfg = json.loads((MONEY_GRAPH / "config.json").read_text(encoding="utf-8"))
-    analyze(DATA_DIR, out, cfg)
-    return out
+MAX_RUNTIME_SECONDS = 300
 
 
 @pytest.fixture(scope="module")
-def nodes_roles(output_dir) -> pd.DataFrame:
-    return pd.read_csv(output_dir / "nodes_roles.csv")
+def fresh_analysis(tmp_path_factory):
+    out_dir = tmp_path_factory.mktemp("money_graph_outputs")
+    config = json.loads((MONEY_GRAPH / "config.json").read_text(encoding="utf-8"))
+    started = time.perf_counter()
+    summary = analyze(DATA_DIR, out_dir, config)
+    elapsed = time.perf_counter() - started
+    return {"out_dir": out_dir, "summary": summary, "config": config, "elapsed": elapsed}
 
 
 @pytest.fixture(scope="module")
-def clusters(output_dir) -> pd.DataFrame:
-    return pd.read_csv(output_dir / "clusters.csv")
+def output_dir(fresh_analysis):
+    return fresh_analysis["out_dir"]
 
 
 @pytest.fixture(scope="module")
-def top_nodes(output_dir) -> pd.DataFrame:
-    return pd.read_csv(output_dir / "top_nodes.csv")
+def nodes_roles(fresh_analysis) -> pd.DataFrame:
+    return pd.read_csv(fresh_analysis["out_dir"] / "nodes_roles.csv")
+
+
+@pytest.fixture(scope="module")
+def clusters(fresh_analysis) -> pd.DataFrame:
+    return pd.read_csv(fresh_analysis["out_dir"] / "clusters.csv")
+
+
+@pytest.fixture(scope="module")
+def top_nodes(fresh_analysis) -> pd.DataFrame:
+    return pd.read_csv(fresh_analysis["out_dir"] / "top_nodes.csv")
+
+
+def test_pipeline_generates_all_exports(fresh_analysis):
+    for name in (
+        "nodes_roles.csv", "clusters.csv", "top_nodes.csv", "requests.csv",
+        "resilience.csv", "taint_edges.csv", "summary.json", "viewer.html",
+    ):
+        path = fresh_analysis["out_dir"] / name
+        assert path.is_file(), f"пайплайн не создал {name}"
+        assert path.stat().st_size > 0, f"пайплайн создал пустой {name}"
+    assert fresh_analysis["elapsed"] <= MAX_RUNTIME_SECONDS
+
+
+def test_summary_matches_current_inputs_and_exports(fresh_analysis, nodes_roles, clusters):
+    summary = json.loads((fresh_analysis["out_dir"] / "summary.json").read_text(encoding="utf-8"))
+    assert summary == fresh_analysis["summary"]
+    nodes = pd.read_parquet(DATA_DIR / "nodes.parquet")
+    edges = pd.read_parquet(DATA_DIR / "edges.parquet")
+    transactions = pd.read_parquet(DATA_DIR / "transactions.parquet")
+    assert summary["nodes"] == len(nodes) == len(nodes_roles)
+    assert summary["edges"] == len(edges)
+    assert summary["transactions"] == len(transactions)
+    assert summary["seeds"] == int(nodes.is_seed.sum())
+    assert summary["clusters"] == clusters.cluster_id.nunique() == nodes_roles.cluster_id.nunique()
+    assert summary["roles"] == nodes_roles.role_detail.value_counts().to_dict()
+    assert summary["taint_model"] == "temporal_daily_balance"
+    assert summary["taint_iterations"] == 0
+    assert summary["max_depth"] == fresh_analysis["config"]["max_depth"]
+    assert summary["min_tx_kzt"] == fresh_analysis["config"]["min_tx_kzt"]
+    dates = pd.to_datetime(transactions.date)
+    assert pd.Timestamp(summary["period_start"]) <= dates.min()
+    assert pd.Timestamp(summary["period_end"]) >= dates.max()
+    assert 0 <= summary["runtime_sec"] <= MAX_RUNTIME_SECONDS
 
 
 def test_nodes_roles_has_exact_row_count(nodes_roles):
@@ -83,6 +126,19 @@ def test_role_base_is_strictly_within_tz_vocabulary(nodes_roles):
 def test_scores_are_in_unit_range(nodes_roles):
     assert nodes_roles["role_score"].between(0, 1).all()
     assert nodes_roles["priority_score"].between(0, 1).all()
+
+
+def test_priority_contributions_reconcile_with_score(nodes_roles):
+    columns = [
+        "priority_tainted_in", "priority_block_impact", "priority_role",
+        "priority_betweenness", "priority_seed_sources", "priority_turnover",
+    ]
+    assert set(columns).issubset(nodes_roles.columns)
+    contributions = nodes_roles[columns]
+    assert contributions.notna().all().all()
+    assert ((contributions >= 0) & (contributions <= 1)).all().all()
+    # Six components use 8 decimals; the displayed total uses 4 decimals.
+    assert (contributions.sum(axis=1) - nodes_roles.priority_score).abs().le(0.000051).all()
 
 
 def test_evidence_is_short_and_has_numbers(nodes_roles):
@@ -133,8 +189,21 @@ def test_incoming_shares_and_known_seed_explanation(nodes_roles, top_nodes):
     assert nodes_roles.loc[~positive, "taint_share"].isna().all()
     gid = 100000003684369100
     node = nodes_roles.set_index("gid").loc[gid]
-    assert node.taint_state_share == 1.0
-    assert node.taint_share == pytest.approx(0.7960395131)
+    assert node.taint_share == pytest.approx(node.tainted_in_kzt / node.in_kzt)
+    assert node.taint_state_share == pytest.approx(node.taint_share)
+    assert node.taint_iterations == 0
     why = top_nodes.set_index("gid").loc[gid, "why"]
-    assert "79.6%" in why and "100%" not in why
-    assert "3848436.00 KZT" in why
+    assert f"{node.taint_share:.1%}" in why
+    assert f"{node.tainted_in_kzt:.2f} KZT из {node.in_kzt:.2f} KZT" in why
+    assert "Хронологический расчёт" in why
+    assert "итераций" not in why
+
+
+def test_chronological_edge_trace_reconciles_with_node_incoming(output_dir, nodes_roles):
+    trace = pd.read_csv(output_dir / "taint_edges.csv")
+    assert (trace.tainted_kzt >= 0).all()
+    assert (trace.tainted_kzt <= trace.sum_kzt + 1e-6).all()
+    by_receiver = trace.groupby("dst").tainted_kzt.sum()
+    observed = nodes_roles.set_index("gid")
+    expected = by_receiver.reindex(observed.index, fill_value=0)
+    assert (observed.tainted_in_kzt - expected).abs().max() < 1e-6

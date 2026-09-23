@@ -179,7 +179,7 @@ function harness() {
     };
   `, context);
   vm.runInContext(platformSource, context, {filename: "platform.js"});
-  const exports = vm.runInContext("({session, state, api, showLogin, enterWorkspace, setView})", context);
+  const exports = vm.runInContext("({session, state, assistant, askAssistant, loadAssistantStatus, api, showLogin, enterWorkspace, setView})", context);
   return {
     ...exports, context, document, requests, caseLoads,
     element: id => document.getElementById(id),
@@ -386,4 +386,130 @@ test("two-tab cookie switch: a B response cannot reach a tab still displaying A"
     identityRequest.finish(account("B"));
     await focus;
   }
+});
+
+test("assistant status is requested only after login and uses the current session", async () => {
+  const h = harness();
+  assert.deepEqual(h.requests.map(request => request.url), ["/api/auth/me"]);
+  await h.guest();
+  assert.equal(h.requests.length, 1, "anonymous bootstrap must not request assistant status");
+  await h.signIn("A");
+  const request = h.requests.at(-1);
+  assert.equal(request.url, "/api/assistant/status");
+  assert.equal(request.config.credentials, "same-origin");
+  request.finish({configured: true, model: "test-model"});
+  await flush();
+  assert.equal(h.assistant.configured, true);
+  assert.equal(h.element("assistant-form").hidden, false);
+});
+
+test("late assistant configuration cannot overwrite another account's pending status", async () => {
+  const h = harness(); await h.guest(); await h.signIn("A");
+  const previous = h.requests.at(-1);
+  previous.headers(); await previous.bodyStarted;
+  h.showLogin(); await h.signIn("B");
+  const current = h.requests.at(-1);
+  previous.finish({configured: true, model: "test-model"});
+  await flush();
+  assert.equal(h.session.user.id, "B");
+  assert.equal(h.assistant.configured, false);
+  assert.equal(h.assistant.checked, false);
+  assert.equal(h.assistant.availabilityError, false);
+  current.finish({configured: false, model: null});
+  await flush();
+  assert.equal(h.assistant.checked, true);
+  assert.equal(h.element("assistant-form").hidden, true);
+});
+
+function prepareAssistant(h) {
+  h.state.data = {};
+  h.state.loading = false;
+  h.state.selected = "101";
+  h.state.nodes.set("101", {gid: "101"});
+  h.assistant.configured = true;
+  h.assistant.gids = ["101"];
+  h.element("assistant-question").value = "A-private-question";
+  vm.runInContext("renderGraph = () => {};", h.context);
+}
+
+test("assistant POST preserves CSRF, private transport and the selected string identifiers", async () => {
+  const h = harness(); await h.guest(); await h.signIn("A");
+  prepareAssistant(h);
+  const pending = h.askAssistant("question");
+  const request = h.requests.at(-1);
+  assert.equal(request.url, "/api/cases/demo/assistant");
+  assert.equal(request.config.headers.get("X-CSRF-Token"), "csrf-A");
+  assert.equal(request.config.credentials, "same-origin");
+  assert.equal(request.config.cache, "no-store");
+  assert.deepEqual(JSON.parse(request.config.body), {question: "A-private-question", gids: ["101"], mode: "question"});
+  request.finish({detail: "Provider unavailable"}, 503);
+  await pending;
+  assert.equal(h.element("assistant-error").textContent, "Provider unavailable");
+  assert.equal(h.requests.filter(item => item.url.endsWith("/assistant")).length, 1);
+});
+
+test("OpenAI credential failure returned as 502 preserves the application session and question", async () => {
+  const h = harness(); await h.guest(); await h.signIn("A");
+  prepareAssistant(h);
+  const generation = h.session.generation;
+  const pending = h.askAssistant("question");
+  const reason = "OpenAI отклонил API-ключ. Проверьте настройки подключения ИИ.";
+  h.requests.at(-1).finish({detail: reason}, 502);
+  await pending;
+
+  assert.equal(h.session.user.id, "A");
+  assert.equal(h.session.generation, generation);
+  assert.equal(h.session.csrf, "csrf-A");
+  assert.equal(h.element("application").hidden, false);
+  assert.equal(h.element("login-screen").hidden, true);
+  assert.equal(h.element("assistant-question").value, "A-private-question");
+  assert.deepEqual([...h.assistant.gids], ["101"]);
+  assert.equal(h.element("assistant-error").textContent, reason);
+  assert.equal(h.element("assistant-error").hidden, false);
+  assert.equal(h.element("assistant-submit").disabled, false);
+});
+
+test("application authentication failure returned as 401 still signs out and clears assistant inputs", async () => {
+  const h = harness(); await h.guest(); await h.signIn("A");
+  prepareAssistant(h);
+  const pending = h.askAssistant("question");
+  h.requests.at(-1).finish({detail: "Authentication required"}, 401);
+  await pending;
+
+  assert.equal(h.session.user, null);
+  assert.equal(h.session.csrf, null);
+  assert.equal(h.element("application").hidden, true);
+  assert.equal(h.element("login-screen").hidden, false);
+  assert.equal(h.element("assistant-question").value, "");
+  assert.equal(h.assistant.gids.length, 0);
+  assert.match(h.element("login-error").textContent, /Сессия завершена/);
+});
+
+test("logout aborts and clears assistant data; a late answer cannot reach the next account", async () => {
+  const h = harness(); await h.guest(); await h.signIn("A");
+  prepareAssistant(h);
+  const pending = h.askAssistant("question");
+  const request = h.requests.at(-1);
+  request.headers(); await request.bodyStarted;
+  h.element("assistant-result").textContent = "A-private-answer";
+  h.element("assistant-error").textContent = "A-private-error";
+  h.assistant.edges.add("101:202");h.assistant.nodes.add("101");
+  h.showLogin();
+  assert.equal(request.config.signal.aborted, true);
+  assert.equal(h.assistant.gids.length, 0);
+  assert.equal(h.assistant.edges.size, 0);
+  assert.equal(h.assistant.nodes.size, 0);
+  assert.equal(h.assistant.configured, false);
+  assert.equal(h.element("assistant-question").value, "");
+  for(const id of ["assistant-result", "assistant-error", "assistant-selection", "assistant-availability"]) {
+    assert.equal(h.element(id).textContent, "", `${id} must not retain private content`);
+  }
+  assert.equal(h.element("assistant-panel").inert, true);
+  await h.signIn("B");
+  request.finish({answer: "A-delayed-answer", evidence: [], edges: [], limitations: [], mode: "openai"});
+  await pending;
+  assert.equal(h.session.user.id, "B");
+  assert.equal(h.element("assistant-result").textContent, "");
+  assert.equal(h.element("assistant-error").textContent, "");
+  assert.equal(h.assistant.result, null);
 });

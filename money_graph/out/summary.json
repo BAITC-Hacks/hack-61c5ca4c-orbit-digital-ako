@@ -8,20 +8,31 @@
   "seeds": 81,
   "min_tx_kzt": 5000,
   "roles": {
-    "peripheral": 1162,
+    "peripheral": 1212,
     "truncated": 444,
     "terminal": 358,
-    "transit": 154,
+    "transit": 104,
     "consolidator": 67,
     "distributor": 46,
     "coordinator": 17
   },
   "clusters": 71,
-  "tainted_flow_kzt": 253083784,
-  "taint_iterations": 8,
-  "taint_flow_definition": "Sum of observed edge amounts times source state after H updates; not unique funds.",
-  "taint_horizon_caveat": "Finite-step estimate; no convergence claim. Results and removal effects depend on taint_iterations.",
-  "temporal_caveat": "Date proximity proxy without amount matching; same-day transaction order is unknown.",
+  "tainted_flow_kzt": 64289788,
+  "taint_model": "temporal_daily_balance",
+  "taint_iterations": 0,
+  "taint_state_share_definition": "Deprecated alias of taint_share: marked received amount / observed incoming amount; null with no incoming.",
+  "taint_flow_definition": "Chronological sum of marked transfer amounts under available-balance assumptions; not unique funds.",
+  "taint_horizon_caveat": "Uses all observed dates in order. The legacy taint_iterations setting is ignored; exported taint_iterations=0.",
+  "temporal_caveat": "FIFO amount matching uses strictly earlier calendar days; same-day transaction order is unknown.",
+  "fast_lag_days": 2,
+  "taint_assumptions": [
+    "Переводы исходных клиентов считаются мечеными по определению; это допущение модели, не доказательство происхождения.",
+    "Исходящие используют только поступления предыдущих дней; порядок переводов внутри дня неизвестен.",
+    "Недостающая сумма считается неизвестным немеченым начальным остатком или внешним поступлением.",
+    "Меченые и немеченые остатки смешиваются пропорционально; общий поток суммируется по переводам, а не по уникальным деньгам.",
+    "Быстрый транзит использует FIFO: сначала расходуются более ранние поступления, каждое не более одного раза.",
+    "Исключение узла пересчитывает смешивание; эффект может быть отрицательным и не является прогнозом предотвращённого ущерба."
+  ],
   "cutoff_model": {
     "train_nodes": 1723,
     "base_rate_onward": 0.374,
@@ -32,5 +43,5 @@
       "days_left": -0.089
     }
   },
-  "runtime_sec": 3.4
+  "runtime_sec": 11.9
 }

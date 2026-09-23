@@ -8,26 +8,33 @@ import re
 import shutil
 import uuid
 from pathlib import Path
+from typing import Annotated, Literal
 
 import pandas as pd
+from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.body_limit import RequestBodyLimitMiddleware
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from mg.auth import install_auth
 from mg.validation import InputError, validate_data
+from mg.assistant import AssistantUnavailable, GraphTools, ask_openai, settings as assistant_settings
+from mg.provider_errors import provider_error_details
 from mg.viewer import ROLE_COLORS, ROLE_RU
 from run import analyze
 from workspace_api import install_workspace_routes
 
 ROOT = Path(__file__).resolve().parent
+load_dotenv(ROOT / ".env", override=False)
 STATE_ROOT = Path(os.environ.get("MONEYGRAPH_STATE_DIR", str(ROOT / ".local"))).resolve()
 CASES = STATE_ROOT / "cases"
-EXPORTS = {"nodes_roles.csv", "clusters.csv", "top_nodes.csv", "requests.csv", "resilience.csv"}
+EXPORTS = {"nodes_roles.csv", "clusters.csv", "top_nodes.csv", "requests.csv", "resilience.csv", "taint_edges.csv"}
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 ANALYSIS_SLOT = asyncio.Semaphore(1)
+ASSISTANT_SLOT = asyncio.Semaphore(1)
 app = FastAPI(title="Граф денег", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 app.add_middleware(RequestBodyLimitMiddleware, max_body_size=3 * MAX_UPLOAD_BYTES + 1024 * 1024)
@@ -85,6 +92,58 @@ def favicon():
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
+
+
+class AssistantQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    question: str = Field(default="", max_length=1000)
+    gids: list[Annotated[str, StringConstraints(pattern=r"^-?\d{1,19}$", strict=True)]] = Field(min_length=1, max_length=5)
+    mode: Literal["explain", "common_recipients", "paths", "missing_data", "question"] = "explain"
+
+
+@app.get("/api/assistant/status")
+def assistant_status():
+    return assistant_settings()
+
+
+@app.post("/api/cases/{case_id}/assistant")
+async def assistant_query(case_id: str, body: AssistantQuery, request: Request):
+    # Auth middleware enforces session, same-origin and CSRF before this route.
+    # Resolve ownership before reading files or checking provider availability.
+    data, out, _ = resolve_case(request, case_id)
+    if body.mode == "question" and not assistant_settings()["configured"]:
+        raise HTTPException(503, "Вопросы к ИИ пока не подключены. Локальные кнопки работают без ключа.")
+    try:
+        graph_tools = await asyncio.to_thread(GraphTools, data, out)
+        graph_tools.validate_gids(body.gids)
+        if body.mode != "question":
+            return await asyncio.to_thread(graph_tools.preset, body.mode, body.gids)
+        if not body.question.strip():
+            raise ValueError("Введите вопрос о выбранных счетах.")
+        try:
+            await asyncio.wait_for(ASSISTANT_SLOT.acquire(), timeout=0.1)
+        except TimeoutError:
+            raise HTTPException(429, "Помощник уже отвечает на вопрос. Дождитесь завершения.")
+        try:
+            return await asyncio.wait_for(ask_openai(graph_tools, body.gids, body.question), timeout=60)
+        finally:
+            ASSISTANT_SLOT.release()
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except AssistantUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(504, "ИИ не успел ответить. Локальные кнопки по-прежнему доступны.") from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # Do not log provider exceptions: they can contain request data or credentials.
+        logging.warning("Assistant failed: %s", type(exc).__name__)
+        provider_error = provider_error_details(exc)
+        if provider_error is not None:
+            code, message = provider_error
+            raise HTTPException(code, message) from exc
+        raise HTTPException(502, "Не удалось получить ответ. Проверьте подключение и настройки API; локальные кнопки доступны.") from exc
 
 
 @app.get("/api/cases")
