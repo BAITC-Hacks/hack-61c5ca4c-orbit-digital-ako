@@ -8,6 +8,7 @@
   <title>Граф денег · Анализ сети</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/responsive.css">
   <script src="/vendor/vis-network.min.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
@@ -20,23 +21,27 @@
     </div>
   </header>
   <div id="status" class="status" role="status" aria-live="polite">Загрузка кейса…</div>
+  <section class="case-guide" aria-label="Как работать с анализом">
+    <div><span class="kicker">ОТ СЕТИ ПЕРЕВОДОВ — К ПЛАНУ ПРОВЕРКИ</span><h1>Кого проверить первым и почему?</h1><p>Выберите клиента в приоритетах → изучите его связи → скачайте список для углублённой проверки.</p></div>
+    <nav class="workspace-links" aria-label="Разделы анализа"><a href="#network-panel">Схема сети</a><a href="#priorities-panel">Приоритеты</a><a href="#inspector-panel">Карточка клиента</a></nav>
+  </section>
   <section class="metrics" aria-label="Сводка">
-    <div class="metric"><span>Узлы</span><strong id="m-nodes">—</strong></div>
-    <div class="metric"><span>Seed</span><strong id="m-seeds">—</strong></div>
-    <div class="metric"><span>Переводы</span><strong id="m-transactions">—</strong></div>
-    <div class="metric"><span>Кластеры</span><strong id="m-clusters">—</strong></div>
-    <div class="metric wide"><span>Период анализа</span><strong id="m-period">—</strong></div>
+    <div class="metric"><span>Клиенты в сети</span><strong id="m-nodes">—</strong><small id="m-edges">Участники и их связи</small></div>
+    <div class="metric"><span>Исходный список · seed</span><strong id="m-seeds">—</strong><small>Клиенты, с которых начат обход</small></div>
+    <div class="metric"><span>Денежные переводы</span><strong id="m-transactions">—</strong><small>Операции внутри банка</small></div>
+    <div class="metric"><span>Группы связей</span><strong id="m-clusters">—</strong><small>Кластеры для анализа структуры</small></div>
+    <div class="metric wide"><span>Период выгрузки</span><strong id="m-period">—</strong><small id="m-boundary">Граница наблюдаемой сети</small></div>
   </section>
   <main class="workspace">
-    <aside class="panel navigation">
-      <div class="panel-head"><span class="kicker">РАССЛЕДОВАНИЕ</span><h1>Найти значимые узлы</h1></div>
+    <aside class="panel navigation" id="priorities-panel">
+      <div class="panel-head"><span class="kicker">1 · ВЫБЕРИТЕ КЛИЕНТА</span><h2>Приоритет проверки</h2><small>Выше в списке — больше оснований для изучения. Это не оценка виновности.</small></div>
       <div class="search"><label for="search">Поиск по gid</label><div class="inline"><input id="search" type="search" inputmode="numeric" placeholder="Введите полный gid или часть"><button id="search-go" class="button" type="button">Найти</button></div><small id="search-hint">Поиск по всем узлам кейса</small></div>
       <div class="tabs" role="tablist"><button class="tab active" data-tab="top" type="button">Приоритет</button><button class="tab" data-tab="clusters" type="button">Кластеры</button><button class="tab" data-tab="requests" type="button">Запросы</button></div>
       <div class="filters"><select id="role-filter" aria-label="Роль"><option value="">Все роли</option></select><label><input id="seed-only" type="checkbox"> Только seed</label></div>
       <div id="list" class="result-list" aria-live="polite"></div>
     </aside>
-    <section class="panel canvas-panel">
-      <div class="canvas-head"><div><span class="kicker">СХЕМА ПЕРЕВОДОВ</span><h2 id="graph-heading">Окружение узла</h2><small id="graph-subtitle">Направление стрелки показывает движение денег</small></div><button id="fit" class="button" type="button">Уместить</button></div>
+    <section class="panel canvas-panel" id="network-panel">
+      <div class="canvas-head"><div><span class="kicker">2 · ПРОСЛЕДИТЕ ДВИЖЕНИЕ ДЕНЕГ</span><h2 id="graph-heading">Связи выбранного клиента</h2><small id="graph-subtitle">Стрелка показывает, от кого и кому переведены деньги</small></div><button id="fit" class="button" type="button">Уместить граф</button></div>
       <div class="toolbar">
         <label>Связи <select id="direction"><option value="both">Все</option><option value="in">Входящие</option><option value="out">Исходящие</option></select></label>
         <label>Глубина <select id="hops"><option value="1">1 хоп</option><option value="2">2 хопа</option><option value="3">3 хопа</option></select></label>
@@ -46,10 +51,11 @@
         <button id="restore" class="button" type="button">Вернуть</button>
       </div>
       <div class="graph-wrap"><div id="graph" role="img" aria-label="Интерактивный граф переводов"></div><div id="graph-empty" class="graph-empty" hidden></div><div class="graph-tip">Перетаскивайте узлы · колесо — масштаб · щелчок — карточка</div></div>
+      <div id="graph-legend" class="graph-legend" aria-label="Обозначения ролей"></div>
       <details class="appearance"><summary>Фигуры, подписи и отображение</summary><div class="appearance-body"><div class="appearance-options"><label><input id="node-labels" type="checkbox" checked> Подписи gid</label><label><input id="edge-labels" type="checkbox"> Суммы на связях</label><label><input id="pin-node" type="checkbox"> Закрепить выбранный узел</label><button id="reset-layout" class="button" type="button">Сбросить расположение</button></div><p>Форма и цвет обозначают роль; двойная рамка — seed. Формы можно менять для каждого кейса.</p><div id="shape-settings" class="shape-grid"></div></div></details>
       <div class="graph-footer"><span id="graph-count">—</span><span>Роли и связи — гипотезы по доступной выборке</span></div>
     </section>
-    <aside class="panel inspector"><div class="panel-head"><span class="kicker">КАРТОЧКА УЗЛА</span><h2>Почему этот узел?</h2></div><div id="node-card" class="card-content"><p class="muted">Выберите узел на графе или в списке.</p></div></aside>
+    <aside class="panel inspector" id="inspector-panel"><div class="panel-head"><span class="kicker">3 · ПРОВЕРЬТЕ ОБОСНОВАНИЕ</span><h2>Почему этот клиент?</h2></div><div id="node-card" class="card-content"><p class="muted">Выберите узел на графе или в списке.</p></div></aside>
   </main>
   <section class="lower">
     <div class="panel model"><div class="panel-head"><span class="kicker">МОДЕЛЬНЫЙ СЦЕНАРИЙ</span><h2>Что меняется при исключении топ узлов</h2></div><div id="model-chart" class="model-chart"></div><small>Сценарий по наблюдаемому графу; это не прогноз реальной блокировки.</small></div>

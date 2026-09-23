@@ -91,7 +91,16 @@ function renderSummary() {
   $("m-nodes").textContent=fmt(s.nodes); $("m-seeds").textContent=fmt(s.seeds ?? state.data.nodes.filter(n=>n.is_seed).length);
   $("m-transactions").textContent=fmt(s.transactions ?? state.data.edges.reduce((a,e)=>a+e[3],0));
   $("m-clusters").textContent=fmt(s.clusters);
-  $("m-period").textContent=[s.period_start,s.period_end].filter(Boolean).join(" — ") || "Период выгрузки";
+  const dateLabel=value=>value ? new Intl.DateTimeFormat("ru-RU",{day:"numeric",month:"short",year:"numeric",timeZone:"UTC"}).format(new Date(value+"T00:00:00Z")) : "—";
+  $("m-period").textContent=dateLabel(s.period_start)+" — "+dateLabel(s.period_end);
+  $("m-edges").textContent=fmt(state.data.edges.length)+" связей между клиентами";
+  $("m-boundary").textContent="Обход до "+(s.max_depth ?? 4)+" хопов · от "+fmt(s.min_tx_kzt ?? 5000)+" KZT";
+  const legend=$("graph-legend"); clear(legend);
+  for (const [role,name] of Object.entries(state.data.role_names)) {
+    const item=append(legend,"span","legend-item");
+    const dot=append(item,"i"); dot.style.background=state.data.colors[role];
+    append(item,"span","",name);
+  }
   const roles=$("role-filter"); clear(roles);
   const all=el("option","","Все роли"); all.value=""; roles.append(all);
   for (const role of Object.keys(state.data.role_names)) {
@@ -128,7 +137,7 @@ function renderList() {
         },state.cluster===cluster.cluster_id);
     }
   } else if (state.tab==="requests") {
-    for (const req of state.data.requests.slice(0,300)) {
+    for (const req of state.data.requests) {
       if (q && !req.gid.includes(q)) continue;
       rowButton(list,req.gid,req.reason,()=>activateNode(req.gid),req.gid===state.selected);
     }
@@ -136,10 +145,12 @@ function renderList() {
     const role=$("role-filter").value, seeds=$("seed-only").checked;
     const nodes=state.data.nodes.filter(n=>(!q || n.gid.includes(q)) && (!role || n.role===role) && (!seeds || n.is_seed))
       .sort((a,b)=>b.priority_score-a.priority_score || a.gid.localeCompare(b.gid)).slice(0,150);
-    for (const node of nodes) {
-      const button=rowButton(list,node.gid,"Приоритет "+Number(node.priority_score).toFixed(3)+" · "+node.evidence,
+    for (const [index,node] of nodes.entries()) {
+      const button=rowButton(list,node.gid,node.evidence,
         ()=>activateNode(node.gid),node.gid===state.selected);
       button.firstChild.append(rolePill(node.role));
+      const score=el("div","priority-caption","№ "+(index+1)+" в списке · приоритет "+Number(node.priority_score).toFixed(3)+" / 1");
+      button.insertBefore(score,button.children[1]);
     }
   }
   if (!list.childElementCount) append(list,"p","muted","Ничего не найдено. Измените поиск или фильтр.");
@@ -167,7 +178,7 @@ function renderCard() {
   append(card,"div","evidence",n.evidence);
   if (n.role==="truncated") append(card,"div","warning","Исходящие за границей обхода не наблюдались. Узел нельзя считать конечным получателем.");
   const kv=append(card,"div","kv");
-  detail(kv,"Приоритет",Number(n.priority_score).toFixed(3)); detail(kv,"Уверенность роли",Math.round(n.role_score*100)+"%");
+  detail(kv,"Приоритет проверки",Number(n.priority_score).toFixed(3)+" / 1"); detail(kv,"Сила признаков роли",Math.round(n.role_score*100)+" / 100");
   detail(kv,"Кластер",n.cluster_id);detail(kv,"Плательщиков",fmt(n.in_deg));detail(kv,"Получателей",fmt(n.out_deg));
   detail(kv,"Входящий поток",money(n.in_kzt));detail(kv,"Исходящий поток",money(n.out_kzt));
   detail(kv,"Посредничество",Number(n.betweenness||0).toFixed(4));
@@ -175,6 +186,7 @@ function renderCard() {
   if (n.p_onward!==null && !Number.isNaN(n.p_onward)) detail(kv,"Вероятность следующего хопа",Math.round(n.p_onward*100)+"%");
   const actions=append(card,"div","card-actions");
   const focus=append(actions,"button","button","Показать окружение");focus.addEventListener("click",()=>{state.cluster=null;renderGraph();});
+  const go=append(actions,"a","button","Перейти к графу");go.href="#network-panel";
   const copy=append(actions,"button","button","Скопировать gid");copy.addEventListener("click",()=>navigator.clipboard.writeText(n.gid));
   connectionSection(card,"Крупнейшие входящие",state.incoming.get(n.gid)||[],true);
   connectionSection(card,"Крупнейшие исходящие",state.outgoing.get(n.gid)||[],false);
@@ -224,7 +236,8 @@ function renderGraph() {
   const ids=visibleIds(), flow=$("layout").value==="flow";
   $("graph-empty").hidden=ids.size>0;
   $("graph-empty").textContent="Все узлы скрыты. Нажмите «Вернуть».";
-  $("graph-heading").textContent=state.cluster===null?"Окружение "+state.selected:"Кластер "+state.cluster;
+  $("graph-heading").textContent=state.cluster===null?"Связи выбранного клиента":"Кластер "+state.cluster;
+  $("graph-subtitle").textContent="gid "+state.selected+" · стрелки показывают направление переводов";
   $("graph-count").textContent=fmt(ids.size)+" узлов на схеме · максимум 220 для читаемости";
   const vertices=[...ids].map(id=>{
     const n=state.nodes.get(id), xy=state.positions[id], selected=id===state.selected;
@@ -234,7 +247,7 @@ function renderGraph() {
       color:{background:state.data.colors[n.role]||"#607887",border:n.is_seed?"#152c3b":"#ffffff",highlight:{background:state.data.colors[n.role],border:"#132c3b"}},
       borderWidth:n.is_seed?4:2,borderWidthSelected:5,
       shapeProperties:{borderDashes:n.role==="truncated"?[4,3]:false,useBorderWithImage:true},
-      font:{size:10,color:"#233e4b",strokeWidth:3,strokeColor:"#fff"},fixed:state.pinned.has(id)};
+      font:{size:13,color:"#233e4b",strokeWidth:3,strokeColor:"#fff"},fixed:state.pinned.has(id)};
     if (xy && !flow) {vertex.x=xy.x;vertex.y=xy.y;}
     if (shape==="pictogram") vertex.image=pictogram(n.role,state.data.colors[n.role]||"#607887");
     if (selected) vertex.borderWidth=5;
@@ -257,7 +270,9 @@ function renderGraph() {
   if (ids.has(state.selected)) state.network.selectNodes([state.selected]);
   state.network.on("click",event=>{if(event.nodes.length)activateNode(String(event.nodes[0]),state.cluster!==null);});
   state.network.on("dragEnd",()=>rememberPositions());
-  state.network.once("stabilized",()=>{state.network.setOptions({physics:false});rememberPositions();});
+  const network=state.network;
+  network.once("stabilized",()=>{if(state.network!==network)return;network.setOptions({physics:false});network.fit({animation:false});rememberPositions();});
+  requestAnimationFrame(()=>{if(state.network===network){network.redraw();network.fit({animation:false});}});
 }
 function renderModel() {
   const root=$("model-chart");clear(root);
