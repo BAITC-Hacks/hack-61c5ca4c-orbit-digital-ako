@@ -1,5 +1,7 @@
 """Собрать автономный HTML-экран из исходников ui/ и результатов пайплайна."""
 
+import base64
+import hashlib
 import json
 from pathlib import Path
 
@@ -39,6 +41,11 @@ def _script_json(data):
             .replace("\u2029", "\\u2029"))
 
 
+def _script_hash(source):
+    digest = hashlib.sha256(source.encode("utf-8")).digest()
+    return "'sha256-" + base64.b64encode(digest).decode("ascii") + "'"
+
+
 def write_viewer(path, df, edges, clusters, top, res, summary, vis_js, requests, cfg):
     nodes = [{
         "id": str(gid), "role": row.role, "rs": _num(row.role_score, 2),
@@ -74,8 +81,18 @@ def write_viewer(path, df, edges, clusters, top, res, summary, vis_js, requests,
     }
     ui = ROOT / "ui"
     html = (ui / "index.html").read_text(encoding="utf-8")
+    vendor_script = Path(vis_js).read_text(encoding="utf-8")
+    data_script = "const D=" + _script_json(data) + ";"
+    app_script = (ui / "app.js").read_text(encoding="utf-8")
+    policy = (
+        "default-src 'none'; script-src " +
+        " ".join(_script_hash(source) for source in (vendor_script, data_script, app_script)) +
+        "; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; "
+        "font-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    )
+    html = html.replace("/*CSP*/", policy)
     html = html.replace("/*STYLES*/", (ui / "styles.css").read_text(encoding="utf-8"))
-    html = html.replace("/*VIS*/", Path(vis_js).read_text(encoding="utf-8"))
-    html = html.replace("/*DATA*/", _script_json(data))
-    html = html.replace("/*APP*/", (ui / "app.js").read_text(encoding="utf-8"))
+    html = html.replace("/*VIS*/", vendor_script)
+    html = html.replace("const D=/*DATA*/;", data_script)
+    html = html.replace("/*APP*/", app_script)
     Path(path).write_text(html, encoding="utf-8")

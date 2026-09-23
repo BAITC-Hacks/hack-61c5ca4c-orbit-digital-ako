@@ -37,7 +37,6 @@ def main():
     ap.add_argument("--data", default=str(ROOT / "data"))
     ap.add_argument("--out", default=str(ROOT / "out"))
     ap.add_argument("--config", default=str(ROOT / "config.json"))
-    ap.add_argument("--llm", action="store_true", help="переписать гипотезы кластеров через Claude API (нужен ANTHROPIC_API_KEY)")
     a = ap.parse_args()
     cfg = json.loads(Path(a.config).read_text(encoding="utf-8"))
     out = Path(a.out)
@@ -75,9 +74,6 @@ def main():
     labels = cluster(G, cfg)
     df["cluster_id"] = labels
     clusters = cluster_table(edges, df, df[["role"]], labels, df.priority_score)
-    if a.llm:
-        from mg.llm import rewrite_hypotheses
-        clusters = rewrite_hypotheses(clusters)
     log(f"кластеры: {clusters.cluster_id.nunique()} (Louvain, seed={cfg['louvain_seed']})")
 
     # ---------- nodes_roles.csv

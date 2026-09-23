@@ -56,10 +56,12 @@ class TaintModel:
         rng = np.random.default_rng(rng_seed)
         active = np.unique(np.r_[self.src, self.dst])
 
-        def state(removed_idx):
+        def state(removed_idx, with_components=True):
             removed = np.zeros(self.n, dtype=bool)
             removed[list(removed_idx)] = True
             _, _, t = self.propagate(removed)
+            if not with_components:
+                return t / total, None, None
             H = G.subgraph([v for v in G if not removed[v]])
             comps = [len(c) for c in nx.connected_components(H)]
             return t / total, len(comps), max(comps) if comps else 0
@@ -68,7 +70,8 @@ class TaintModel:
         rows = []
         for k in range(0, max_n + 1):
             share, n_comp, largest = state(order[:k])
-            rnd = [state(rng.choice(active, size=k, replace=False))[0] for _ in range(n_random)] if k else [1.0]
+            rnd = [state(rng.choice(active, size=k, replace=False), with_components=False)[0]
+                   for _ in range(n_random)] if k else [1.0]
             rows.append({"n_blocked": k, "tainted_flow_left": round(share, 4),
                          "random_flow_left": round(float(np.mean(rnd)), 4),
                          "n_components": n_comp, "largest_component": largest})

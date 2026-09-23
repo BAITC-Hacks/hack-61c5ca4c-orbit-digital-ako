@@ -6,6 +6,11 @@ __pycache__/
 venv/
 env/
 *.egg-info/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
 
 # IDE
 .idea/
