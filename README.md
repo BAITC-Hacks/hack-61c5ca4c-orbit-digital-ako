@@ -4,6 +4,10 @@
 
 Полное описание метода, результатов и ограничений: [money_graph/README.md](money_graph/README.md).
 
+Весь рабочий проект находится в `money_graph/`: расчёт, данные, исходники интерфейса и готовые выгрузки.
+
+![Экран аналитика: приоритеты, карта связей и карточка клиента](money_graph/docs/ui-overview.png)
+
 ## Запуск
 
 Нужен Python 3.10 или новее. Из корня репозитория:
@@ -11,7 +15,6 @@
 ```powershell
 cd money_graph
 python -m pip install -r requirements.txt
-$env:PYTHONIOENCODING = 'utf-8'
 python run.py
 ```
 

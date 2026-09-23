@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Граф денег — аналитическая панель</title>
+  <style>/*STYLES*/</style>
+  <script>/*VIS*/</script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">◎</span>
+      <div><strong>Граф денег</strong><span>Проверка финансовой сети · июль 2026</span></div>
+    </div>
+    <div class="header-actions">
+      <span class="status"><span class="status-dot"></span>Локальный анализ</span>
+      <a class="header-link" href="nodes_roles.csv" download>Скачать CSV</a>
+    </div>
+  </header>
+
+  <section class="summary" aria-label="Сводка по сети">
+    <div class="metric"><span>Узлов в выборке</span><strong id="metric-nodes">—</strong></div>
+    <div class="metric"><span>Seed клиентов</span><strong id="metric-seeds">—</strong></div>
+    <div class="metric"><span>Связей</span><strong id="metric-edges">—</strong></div>
+    <div class="metric"><span>Кластеров</span><strong id="metric-clusters">—</strong></div>
+    <div class="metric metric-accent"><span>Следующий шаг</span><strong>Проверить приоритетные узлы</strong></div>
+  </section>
+
+  <div class="notice" role="note">
+    <strong>Граница данных:</strong> исходящие переводы узлов на 4-м хопе не выгружались. Роли и связи — гипотезы для проверки.
+  </div>
+
+  <main class="workspace">
+    <section class="panel left-panel" aria-label="Навигация и список узлов">
+      <nav class="tabs" role="tablist" aria-label="Разделы анализа">
+        <button type="button" class="tab active" role="tab" aria-controls="tab-priority" data-tab="priority" aria-selected="true">Приоритет</button>
+        <button type="button" class="tab" role="tab" aria-controls="tab-clusters" data-tab="clusters" aria-selected="false">Кластеры</button>
+        <button type="button" class="tab" role="tab" aria-controls="tab-impact" data-tab="impact" aria-selected="false">Модель</button>
+        <button type="button" class="tab" role="tab" aria-controls="tab-requests" data-tab="requests" aria-selected="false">Запросы</button>
+      </nav>
+
+      <div class="search-area">
+        <label for="gid-search">Найти клиента по gid</label>
+        <div class="search-line">
+          <input id="gid-search" type="search" inputmode="numeric" autocomplete="off" placeholder="Полный gid или часть номера">
+          <button type="button" class="button primary" id="search-button">Найти</button>
+        </div>
+        <p id="search-status" class="help" role="status" aria-live="polite">Можно искать любого из 2 248 узлов.</p>
+      </div>
+
+      <div class="tab-panel active" id="tab-priority" role="tabpanel">
+        <div class="section-head"><div><span class="eyebrow">С чего начать</span><h2>Очередь проверки</h2></div><span id="result-count" class="count"></span></div>
+        <div class="filter-line">
+          <label for="role-filter" class="sr-only">Фильтр по роли</label>
+          <select id="role-filter"><option value="">Все роли</option></select>
+          <label for="seed-filter" class="sr-only">Фильтр seed</label>
+          <select id="seed-filter"><option value="">Все узлы</option><option value="seed">Только seed</option><option value="other">Без seed</option></select>
+        </div>
+        <div id="priority-list" class="item-list"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-clusters" role="tabpanel">
+        <div class="section-head"><div><span class="eyebrow">Структура сети</span><h2>Кластеры</h2></div><span class="count">71 группа</span></div>
+        <p class="help section-help">Выберите кластер, чтобы увидеть его участников и гипотезу.</p>
+        <div id="cluster-list" class="item-list"></div>
+      </div>
+
+      <div class="tab-panel" id="tab-impact" role="tabpanel">
+        <div class="section-head"><div><span class="eyebrow">Сценарный анализ</span><h2>Удаление узлов</h2></div></div>
+        <p class="help section-help">Оценка по наблюдаемому графу: какая доля прослеживаемого потока остаётся после исключения топ-N узлов из расчёта.</p>
+        <div id="impact-chart" class="chart-wrap" role="img" aria-label="Сравнение оставшегося потока при исключении приоритетных и случайных узлов"></div>
+        <div id="impact-list" class="impact-list"></div>
+        <p class="help section-help">Это модельный сценарий, а не прогноз последствий реальной блокировки счетов.</p>
+      </div>
+
+      <div class="tab-panel" id="tab-requests" role="tabpanel">
+        <div class="section-head"><div><span class="eyebrow">Закрыть слепые зоны</span><h2>Запросить данные</h2></div><span id="request-count" class="count"></span></div>
+        <div id="request-list" class="item-list"></div>
+      </div>
+    </section>
+
+    <section class="panel graph-panel" aria-label="Карта переводов">
+      <div class="panel-toolbar">
+        <div><span class="eyebrow">Карта связей</span><h2 id="graph-title">Окружение узла</h2></div>
+        <div class="toolbar-controls">
+          <label for="direction-filter" class="sr-only">Направление связей</label>
+          <select id="direction-filter"><option value="both">Вход и выход</option><option value="in">Входящие</option><option value="out">Исходящие</option></select>
+          <label for="depth-filter" class="sr-only">Глубина окружения</label>
+          <select id="depth-filter"><option value="1">1 хоп</option><option value="2">2 хопа</option></select>
+          <button type="button" class="button" id="reset-graph">К узлу</button>
+        </div>
+      </div>
+      <div class="graph-stage">
+        <div id="network" aria-label="Направленный граф переводов"></div>
+        <div id="graph-loading" class="graph-loading" role="status" aria-live="polite">Строим карту…</div>
+        <div id="graph-note" class="graph-note"></div>
+      </div>
+      <div class="graph-footer">
+        <div class="legend">
+          <span><i class="legend-seed"></i> seed</span>
+          <span><i class="legend-edge"></i> направление перевода</span>
+          <span>Размер узла = приоритет</span>
+        </div>
+        <details class="role-legend"><summary>Цвета ролей</summary><div id="role-legend-items"></div></details>
+      </div>
+    </section>
+
+    <aside class="panel detail-panel" aria-label="Карточка клиента">
+      <div id="node-card"></div>
+    </aside>
+  </main>
+
+  <footer class="app-footer">
+    <span>Данные обезличены · период 01–31.07.2026 · только внутрибанковские переводы ≥ 5 000 KZT</span>
+    <div><a href="clusters.csv" download>Кластеры CSV</a><a href="top_nodes.csv" download>Топ CSV</a><a href="requests.csv" download>Запросы CSV</a></div>
+  </footer>
+  <script>const D=/*DATA*/;</script>
+  <script>/*APP*/</script>
+</body>
+</html>
