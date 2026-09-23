@@ -18,7 +18,7 @@ test("demo workspace: trace, graph, simulation, dossier, URL and accessibility",
   await expect(page).toHaveURL(/\/overview$/, { timeout: 90000 });
   const pid = page.url().split("/projects/")[1].split("/")[0];
   await page.screenshot({
-    path: "../docs/screens/overview.png",
+    path: test.info().outputPath("overview.png"),
     fullPage: true,
   });
   const top = await (
@@ -32,7 +32,7 @@ test("demo workspace: trace, graph, simulation, dossier, URL and accessibility",
   await expect(page.locator(".trace-rule.matched")).toBeVisible();
   await page.waitForTimeout(2500);
   await page.screenshot({
-    path: "../docs/screens/investigate.png",
+    path: test.info().outputPath("investigate.png"),
     fullPage: true,
   });
   await page
@@ -57,7 +57,7 @@ test("demo workspace: trace, graph, simulation, dossier, URL and accessibility",
   await expect(page.locator(".simulation-result")).toBeVisible();
   await page.getByRole("button", { name: "Сохранить сценарий в дело" }).click();
   await page.screenshot({
-    path: "../docs/screens/simulation.png",
+    path: test.info().outputPath("simulation.png"),
     fullPage: true,
   });
   await page.getByRole("link", { name: "Дело", exact: true }).click();
@@ -74,7 +74,7 @@ test("demo workspace: trace, graph, simulation, dossier, URL and accessibility",
   const response = await request.get(href!);
   expect(response.status()).toBe(200);
   expect(await response.text()).toContain("Трассировка правил");
-  await page.screenshot({ path: "../docs/screens/cases.png", fullPage: true });
+  await page.screenshot({ path: test.info().outputPath("cases.png"), fullPage: true });
   for (const [link, file] of [
     ["Узлы", "nodes"],
     ["Кластеры", "clusters"],
@@ -83,13 +83,13 @@ test("demo workspace: trace, graph, simulation, dossier, URL and accessibility",
     await page.getByRole("link", { name: link, exact: true }).click();
     await page.waitForTimeout(1500);
     await page.screenshot({
-      path: `../docs/screens/${file}.png`,
+      path: test.info().outputPath(`${file}.png`),
       fullPage: true,
     });
   }
   await page.goto(`/projects/${pid}/overview`);
   await page.setViewportSize({ width: 420, height: 900 });
-  await page.screenshot({ path: "../docs/screens/mobile.png", fullPage: true });
+  await page.screenshot({ path: test.info().outputPath("mobile.png"), fullPage: true });
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
@@ -122,7 +122,7 @@ test("new project -> CSV and seed mapping -> analysis -> dossier", async ({
   await page.getByRole("button", { name: "Продолжить", exact: true }).click();
   await expect(page.locator(".mapping-card")).toHaveCount(2);
   await page.screenshot({
-    path: "../docs/screens/mapping.png",
+    path: test.info().outputPath("mapping.png"),
     fullPage: true,
   });
   await page.getByRole("button", { name: "Продолжить", exact: true }).click();
@@ -134,7 +134,7 @@ test("new project -> CSV and seed mapping -> analysis -> dossier", async ({
     page.getByRole("button", { name: "Запустить анализ", exact: true }),
   ).toBeEnabled();
   await page.screenshot({
-    path: "../docs/screens/quality.png",
+    path: test.info().outputPath("quality.png"),
     fullPage: true,
   });
   await page

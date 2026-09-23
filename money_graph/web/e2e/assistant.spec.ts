@@ -4,14 +4,16 @@ import AxeBuilder from "@axe-core/playwright";
 test("existing assistant: local evidence, graph links, selected CSV and no external requests", async ({
   page,
   request,
+  baseURL,
 }) => {
   const errors: string[] = [];
   const external: string[] = [];
+  const appOrigin = new URL(baseURL as string).origin;
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("request", (r) => {
     if (
-      !r.url().startsWith("http://127.0.0.1:8000") &&
-      !/^(data|blob):/.test(r.url())
+      !/^(data|blob):/.test(r.url()) &&
+      new URL(r.url()).origin !== appOrigin
     )
       external.push(r.url());
   });
@@ -44,7 +46,7 @@ test("existing assistant: local evidence, graph links, selected CSV and no exter
   const audit = await new AxeBuilder({ page }).analyze();
   expect(audit.violations).toEqual([]);
   await page.screenshot({
-    path: "../docs/screens/assistant.png",
+    path: test.info().outputPath("assistant.png"),
     fullPage: true,
   });
   await page.getByRole("link", { name: "Показать основания на графе" }).click();

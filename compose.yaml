@@ -1,0 +1,26 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "127.0.0.1:${MONEYGRAPH_PORT:-8000}:8000"
+    # Compose 2.24+: local tools work even when this file does not exist.
+    # This file is read at container creation, never copied into the image.
+    env_file:
+      - path: ./money_graph/.env
+        required: false
+    environment:
+      MONEY_GRAPH_PROJECTS: /data/projects
+    volumes:
+      - moneygraph_data:/data
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  moneygraph_data:

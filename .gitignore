@@ -18,6 +18,7 @@ playwright-report/
 test-results/
 .pytest_cache/
 *.tsbuildinfo
+backups/
 
 # IDE
 .idea/

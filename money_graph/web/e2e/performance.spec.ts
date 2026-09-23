@@ -4,6 +4,7 @@ import fs from "node:fs";
 test("3000 nodes, offline resources, dark theme and accessibility audit", async ({
   page,
   request,
+  baseURL,
 }) => {
   const projects = await (await request.get("/api/projects")).json();
   let project = projects.find(
@@ -58,11 +59,12 @@ test("3000 nodes, offline resources, dark theme and accessibility audit", async 
   }
   expect(project).toBeTruthy();
   const external: string[] = [];
+  const appOrigin = new URL(baseURL as string).origin;
   page.on("request", (r) => {
     if (
-      !r.url().startsWith("http://127.0.0.1:8000") &&
       !r.url().startsWith("data:") &&
-      !r.url().startsWith("blob:")
+      !r.url().startsWith("blob:") &&
+      new URL(r.url()).origin !== appOrigin
     )
       external.push(r.url());
   });
@@ -125,11 +127,11 @@ test("3000 nodes, offline resources, dark theme and accessibility audit", async 
   }
   await page.goto("/");
   await page.screenshot({
-    path: "../docs/screens/projects.png",
+    path: test.info().outputPath("projects.png"),
     fullPage: true,
   });
   await page.getByRole("button", { name: "Theme", exact: true }).click();
-  await page.screenshot({ path: "../docs/screens/dark.png", fullPage: true });
+  await page.screenshot({ path: test.info().outputPath("dark.png"), fullPage: true });
   await page.goto("/api/docs");
   await expect(page.locator(".swagger-ui")).toBeVisible();
   fs.writeFileSync(
