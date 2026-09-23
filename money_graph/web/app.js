@@ -1,6 +1,20 @@
 "use strict";
 
 const $ = id => document.getElementById(id);
+const session = {user:null,csrf:null,generation:0};
+const apiMessages={
+  "Authentication required":"Войдите в учётную запись.",
+  "Invalid username or password":"Неверный логин или пароль.",
+  "Too many attempts; try again later":"Слишком много попыток входа. Повторите через 15 минут.",
+  "Invalid CSRF token":"Сессия обновилась. Выйдите и войдите снова.",
+  "Password change required":"Сначала смените временный пароль.",
+  "Current password is incorrect":"Текущий пароль указан неверно.",
+  "New password must differ from the current password":"Новый пароль должен отличаться от текущего.",
+  "Username already exists":"Этот логин уже занят.",
+  "Administrator access required":"Действие доступно только администратору.",
+  "You cannot disable your own account":"Нельзя отключить собственную учётную запись.",
+  "Cannot disable the last administrator":"Нельзя отключить последнего администратора."
+};
 const number = new Intl.NumberFormat("ru-RU");
 const fmt = value => number.format(Math.round(Number(value) || 0));
 const amount = value => new Intl.NumberFormat("ru-RU",{maximumFractionDigits:2}).format(Number(value)||0);
@@ -21,7 +35,7 @@ function pictogram(role,color) {
   return 'data:image/svg+xml,'+encodeURIComponent(svg);
 }
 const state = {data:null,caseId:"demo",selected:null,tab:"top",cluster:null,network:null,hidden:new Set(),extras:new Set(),positions:{},pinned:new Set(),shapes:{...DEFAULT_SHAPES},nodes:new Map(),incoming:new Map(),outgoing:new Map()};
-Object.assign(state, {focus:null,page:0,pageSize:30,loadController:null,loadVersion:0,graphFlow:false,tx:null,txVersion:0});
+Object.assign(state, {focus:null,page:0,pageSize:10,loadController:null,loadVersion:0,graphFlow:false,tx:null,txVersion:0,workspaces:new Map()});
 
 function el(tag, cls, value) {
   const node = document.createElement(tag);
@@ -36,10 +50,10 @@ function roleName(role) { return state.data.role_names[role] || role; }
 function rolePill(role) { const pill=el("span","role-pill",roleName(role)); pill.style.background=state.data.colors[role] || "#667c89"; return pill; }
 function storageKey() { return "moneygraph-layout-"+state.caseId; }
 function saveWorkspace() {
-  try { localStorage.setItem(storageKey(),JSON.stringify({positions:state.positions,pinned:[...state.pinned],shapes:state.shapes})); } catch (_) { /* browser storage can be disabled */ }
+  state.workspaces.set(storageKey(),{positions:{...state.positions},pinned:[...state.pinned],shapes:{...state.shapes}});
 }
 function restoreWorkspace() {
-  let saved={}; try { saved=JSON.parse(localStorage.getItem(storageKey()) || "{}"); } catch (_) { /* ignore corrupt storage */ }
+  const saved=state.workspaces.get(storageKey()) || {};
   state.positions=saved.positions || {};
   state.pinned=new Set(saved.pinned || []);
   state.shapes={...DEFAULT_SHAPES,...(saved.shapes || {})};
@@ -50,13 +64,29 @@ function rememberPositions() {
   saveWorkspace();
 }
 async function api(url, options) {
-  const response=await fetch(url,options);
-  if (!response.ok) {
-    let message="Ошибка сервера " + response.status;
-    try { const body=await response.json(); message=Array.isArray(body.detail) ? body.detail.map(item=>item.msg).join("; ") : (body.detail || message); } catch (_) {}
-    throw new Error(message);
+  const expectedUser=session.user?.id;
+  const generation=session.generation;
+  const config={...options,headers:new Headers(options?.headers),credentials:"same-origin",cache:"no-store"};
+  if(config.method && !["GET","HEAD"].includes(config.method.toUpperCase()) && session.csrf) config.headers.set("X-CSRF-Token",session.csrf);
+  const response=await fetch(url,config);
+  let body=null;
+  if(response.status!==204) {
+    try {body=await response.json();}catch(_){if(response.ok)throw new Error("Сервер вернул некорректный ответ.");}
   }
-  return response.json();
+  // A body can arrive long after its headers: check only AFTER consuming it too.
+  if(generation!==session.generation || (expectedUser && session.user?.id!==expectedUser)) throw new Error("Сессия изменилась. Повторите действие после входа.");
+  const respondingUser=response.headers.get("X-Account-Id");
+  if(expectedUser && respondingUser && respondingUser!==expectedUser) {
+    window.dispatchEvent(new Event("auth-expired"));
+    throw new Error("Аккаунт изменился в другой вкладке. Войдите снова.");
+  }
+  if (!response.ok) {
+    if(response.status===401 && session.user && !url.endsWith("/auth/login")) window.dispatchEvent(new Event("auth-expired"));
+    let message="Ошибка сервера " + response.status;
+    if(body) message=Array.isArray(body.detail) ? body.detail.map(item=>item.msg).join("; ") : (body.detail || message);
+    throw new Error(apiMessages[message]||message);
+  }
+  return body;
 }
 async function loadCases(preferred) {
   const cases=await api("/api/cases");
@@ -68,6 +98,10 @@ async function loadCases(preferred) {
 }
 async function loadCase(id) {
   const version=++state.loadVersion;
+  state.loading=true;
+  window.dispatchEvent(new Event("case-loading"));
+  document.querySelectorAll(".platform-page").forEach(page=>page.inert=true);
+  $("report-selected").disabled=true;
   state.loadController?.abort();
   state.loadController=new AbortController();
   $("workspace").inert=true; $("workspace").setAttribute("aria-busy","true"); $("retry").hidden=true;
@@ -79,7 +113,10 @@ async function loadCase(id) {
     $("retry").hidden=false; $("case-select").value=state.caseId;
     status("Не удалось загрузить кейс. "+error.message,true); return;
   } finally {
-    if(version===state.loadVersion) {$("workspace").inert=!state.data;$("workspace").setAttribute("aria-busy","false");}
+    if(version===state.loadVersion) {
+      $("workspace").inert=!state.data;$("workspace").setAttribute("aria-busy","false");
+      document.querySelectorAll(".platform-page").forEach(page=>page.inert=false);$("report-selected").disabled=!state.data;
+    }
   }
   if(version!==state.loadVersion) return;
   if (state.network) { state.network.destroy(); state.network=null; }
@@ -99,8 +136,12 @@ async function loadCase(id) {
   $("hops").value="1"; $("direction").value="both";
   history.replaceState(null,"",id==="demo"?"/":"/?case="+id);
   renderAll();
+  state.loading=false;
   $("workspace").inert=false;
+  $("report-selected").disabled=false;
   status(data.label+" · "+fmt(data.summary.nodes)+" узлов · расчёт "+data.summary.runtime_sec+" с");
+  $("case-overview").textContent=fmt(data.summary.nodes)+" клиентов · "+fmt(data.summary.seeds)+" seed · "+fmt(data.summary.clusters)+" групп";
+  window.dispatchEvent(new CustomEvent("case-loaded",{detail:{id}}));
 }
 function renderAll() { renderSummary(); renderTabs(); renderList(); renderCard(); renderShapes(); renderGraph(); renderModel(); renderDownloads(); }
 function renderSummary() {
@@ -180,8 +221,10 @@ function renderList() {
       const button=rowButton(list,node.gid,node.evidence,
         ()=>activateNode(node.gid),node.gid===state.selected);
       button.firstChild.append(rolePill(node.role));
-      const score=el("div","priority-caption","№ "+(state.page*state.pageSize+index+1)+" в списке · приоритет "+Number(node.priority_score).toFixed(3)+" / 1");
+      const score=el("div","priority-caption","№ "+(state.page*state.pageSize+index+1)+" · индекс приоритета "+Number(node.priority_score).toFixed(3));
       button.insertBefore(score,button.children[1]);
+      const note=button.querySelector(".row-note");
+      if(note) note.textContent=fmt(node.in_deg)+" плательщиков → "+fmt(node.out_deg)+" получателей · связь с "+fmt(node.seed_sources)+" seed";
     }
   }
   if (!list.childElementCount) append(list,"p","muted","Ничего не найдено. Измените поиск или фильтр.");
@@ -217,6 +260,8 @@ function renderCard() {
   const card=$("node-card"); clear(card);
   const n=state.nodes.get(state.selected);
   if (!n) { append(card,"p","muted","Выберите узел."); return; }
+  $("selected-evidence").textContent=n.evidence;
+  window.dispatchEvent(new CustomEvent("node-selected",{detail:{gid:n.gid,userInitiated:!state.loading}}));
   append(card,"small","","gid · клиент в обезличенной выгрузке");
   append(card,"div","gid",n.gid);
   const badges=append(card,"div","card-sub"); badges.append(rolePill(n.role));
@@ -455,4 +500,4 @@ $("upload-form").addEventListener("submit",async event=>{
   finally {submit.disabled=false;submit.textContent="Проверить и рассчитать";$("upload-close").disabled=false;$("upload-form").setAttribute("aria-busy","false");progress.remove();}
 });
 $("upload-dialog").addEventListener("cancel",event=>{if($("upload-submit").disabled)event.preventDefault();});
-loadCases(new URLSearchParams(location.search).get("case")||"demo").catch(error=>{status("Сервер недоступен. "+error.message,true);$("retry").hidden=false;});
+// Authentication bootstraps the case in platform.js. Never fetch private data before login.

@@ -23,7 +23,11 @@ def build_graph(edges: pd.DataFrame, nodes: pd.DataFrame) -> nx.DiGraph:
 
 
 def temporal_features(tx: pd.DataFrame, lag_days: int) -> pd.DataFrame:
-    """Сквозной транзит: какая доля исходящих сумм ушла в течение lag_days после входящего."""
+    """Доля исходящих сумм рядом по дате с любым предшествующим поступлением.
+
+    Это временной прокси: входящие суммы не распределяются между исходящими.
+    При датах без времени порядок переводов в один день неизвестен.
+    """
     inc = tx[["dst", "date", "src"]].rename(columns={"dst": "gid", "date": "in_date", "src": "payer"})
     out = tx[["src", "date", "sum_kzt"]].rename(columns={"src": "gid", "date": "out_date"})
     out = out.reset_index().rename(columns={"index": "tx_id"})

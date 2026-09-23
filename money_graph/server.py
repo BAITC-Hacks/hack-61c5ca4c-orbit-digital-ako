@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 import uuid
@@ -13,18 +14,23 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.body_limit import RequestBodyLimitMiddleware
 
+from mg.auth import install_auth
 from mg.validation import InputError, validate_data
 from mg.viewer import ROLE_COLORS, ROLE_RU
 from run import analyze
+from workspace_api import install_workspace_routes
 
 ROOT = Path(__file__).resolve().parent
-CASES = ROOT / ".local" / "cases"
+STATE_ROOT = Path(os.environ.get("MONEYGRAPH_STATE_DIR", str(ROOT / ".local"))).resolve()
+CASES = STATE_ROOT / "cases"
 EXPORTS = {"nodes_roles.csv", "clusters.csv", "top_nodes.csv", "requests.csv", "resilience.csv"}
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 ANALYSIS_SLOT = asyncio.Semaphore(1)
-app = FastAPI(title="Граф денег", docs_url=None, redoc_url=None)
+app = FastAPI(title="Граф денег", docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
+app.add_middleware(RequestBodyLimitMiddleware, max_body_size=3 * MAX_UPLOAD_BYTES + 1024 * 1024)
 app.mount("/static", StaticFiles(directory=ROOT / "web"), name="static")
 app.mount("/vendor", StaticFiles(directory=ROOT / "vendor"), name="vendor")
 
@@ -35,10 +41,14 @@ async def local_headers(request: Request, call_next):
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
+    user = getattr(request.state, "user", None)
+    if user:
+        response.headers["X-Account-Id"] = user["id"]
     return response
 
 
-def case_paths(case_id: str):
+def case_paths(case_id: str, user_id: str):
+    # Demo is the explicitly shared hackathon dataset, never an uploaded case.
     if case_id == "demo":
         return ROOT / "data", ROOT / "out", "Данные HackAlem"
     if not re.fullmatch(r"[0-9a-f]{32}", case_id):
@@ -48,10 +58,18 @@ def case_paths(case_id: str):
     if not metadata.is_file():
         raise HTTPException(404, "Кейс не найден")
     try:
-        label = json.loads(metadata.read_text(encoding="utf-8"))["label"]
+        meta = json.loads(metadata.read_text(encoding="utf-8"))
+        # Fail closed for legacy cases with no owner, even for administrators.
+        if meta.get("owner_id") != user_id:
+            raise HTTPException(404, "Кейс не найден")
+        label = meta["label"]
     except (ValueError, KeyError):
         raise HTTPException(404, "Кейс повреждён")
     return folder / "data", folder / "out", label
+
+
+def resolve_case(request: Request, case_id: str):
+    return case_paths(case_id, request.state.user["id"])
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -70,12 +88,19 @@ def health():
 
 
 @app.get("/api/cases")
-def list_cases():
+def list_cases(request: Request):
     result = [{"id": "demo", "label": "Данные HackAlem", "summary": _summary(ROOT / "out")}]
     if CASES.is_dir():
         for folder in sorted(CASES.iterdir(), reverse=True):
             if (folder / "case.json").is_file() and (folder / "out" / "summary.json").is_file():
-                meta = json.loads((folder / "case.json").read_text(encoding="utf-8"))
+                try:
+                    meta = json.loads((folder / "case.json").read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(meta, dict) or not isinstance(meta.get("label"), str):
+                    continue
+                if meta.get("owner_id") != request.state.user["id"]:
+                    continue
                 result.append({"id": folder.name, "label": meta["label"], "summary": _summary(folder / "out")})
     return result
 
@@ -118,14 +143,15 @@ async def create_case(request: Request, nodes: UploadFile = File(...), edges: Up
         for upload, name in ((nodes, "nodes.parquet"), (edges, "edges.parquet"),
                              (transactions, "transactions.parquet")):
             await save_upload(upload, data / name)
-        info = await asyncio.to_thread(validate_data, data, min_tx_kzt, max_depth)
         cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
         cfg["min_tx_kzt"] = min_tx_kzt
         cfg["max_depth"] = max_depth
         (folder / "config.json").write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")
         async with ANALYSIS_SLOT:
+            info = await asyncio.to_thread(validate_data, data, min_tx_kzt, max_depth)
             summary = await asyncio.to_thread(analyze, data, folder / "out", cfg)
-        (folder / "case.json").write_text(json.dumps({"label": label, "min_tx_kzt": min_tx_kzt}, ensure_ascii=False), encoding="utf-8")
+        (folder / "case.json").write_text(json.dumps({"label": label, "min_tx_kzt": min_tx_kzt,
+            "owner_id": request.state.user["id"]}, ensure_ascii=False), encoding="utf-8")
         return {"id": case_id, "label": label, "input": info, "summary": summary}
     except InputError as exc:
         shutil.rmtree(folder, ignore_errors=True)
@@ -145,10 +171,12 @@ def csv_records(path: Path, gid_fields=()):
 
 
 @app.get("/api/cases/{case_id}/graph")
-def graph(case_id: str):
-    data, out, label = case_paths(case_id)
+def graph(request: Request, case_id: str):
+    data, out, label = resolve_case(request, case_id)
     summary = _summary(out)
     nodes = csv_records(out / "nodes_roles.csv", ("gid",))
+    for node in nodes:
+        node["role"] = node.get("role_detail") or node["role"]
     edges = pd.read_parquet(data / "edges.parquet")
     config = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
     if case_id != "demo":
@@ -171,10 +199,10 @@ def graph(case_id: str):
 
 
 @app.get("/api/cases/{case_id}/transactions")
-def transactions_for_link(case_id: str, src: str = Query(pattern=r"^-?\d{1,19}$"),
+def transactions_for_link(request: Request, case_id: str, src: str = Query(pattern=r"^-?\d{1,19}$"),
                           dst: str = Query(pattern=r"^-?\d{1,19}$"),
                           offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100)):
-    data, _, _ = case_paths(case_id)
+    data, _, _ = resolve_case(request, case_id)
     frame = pd.read_parquet(data / "transactions.parquet")
     selected = frame[(frame.src.astype(str) == src) & (frame.dst.astype(str) == dst)].copy()
     selected["date"] = pd.to_datetime(selected.date)
@@ -187,11 +215,15 @@ def transactions_for_link(case_id: str, src: str = Query(pattern=r"^-?\d{1,19}$"
 
 
 @app.get("/api/cases/{case_id}/exports/{filename}")
-def export(case_id: str, filename: str):
+def export(request: Request, case_id: str, filename: str):
     if filename not in EXPORTS:
         raise HTTPException(404, "Выгрузка не найдена")
-    _, out, _ = case_paths(case_id)
+    _, out, _ = resolve_case(request, case_id)
     path = out / filename
     if not path.is_file():
         raise HTTPException(404, "Выгрузка не найдена")
     return FileResponse(path, media_type="text/csv", filename=filename)
+
+
+install_workspace_routes(app, resolve_case, STATE_ROOT / "workspaces")
+install_auth(app, STATE_ROOT)

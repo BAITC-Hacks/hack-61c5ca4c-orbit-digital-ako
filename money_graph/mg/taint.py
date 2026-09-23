@@ -2,7 +2,8 @@
 
 Seed-клиенту приписывается доля 1.0 «меченых» денег. Каждый узел передаёт дальше ту же
 долю меченых денег, какая была среди полученного им (пропорционально суммам рёбер).
-Итог по узлу: сколько тенге из полученного прослеживаются к seed-клиентам.
+Это конечное число итераций по агрегированным рёбрам, не трассировка отдельных
+денежных единиц: одна сумма может учитываться на нескольких рёбрах.
 """
 import networkx as nx
 import numpy as np
@@ -21,6 +22,14 @@ class TaintModel:
         self.iters = iterations
 
     def propagate(self, removed: np.ndarray | None = None):
+        """Return (state_H, incoming_H, edge_flow_H) for H configured updates.
+
+        After H updates, edge_flow[u,v] = observed_amount[u,v] * state_H[u].
+        incoming_H[v] is the sum of those SAME edge flows entering v. Its
+        fraction is incoming_H[v] / observed_incoming[v], not state_H[v]:
+        seed states are forced to one and finite-step states need not converge.
+        The historical finite-horizon algorithm and ranking are unchanged.
+        """
         w = self.w
         if removed is not None and removed.any():
             w = np.where(removed[self.src] | removed[self.dst], 0.0, w)

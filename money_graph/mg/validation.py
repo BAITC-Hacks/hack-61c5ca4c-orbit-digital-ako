@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 
 REQUIRED = {
@@ -11,6 +12,8 @@ REQUIRED = {
     "edges.parquet": {"src", "dst", "sum_kzt", "n_tx", "depth"},
     "transactions.parquet": {"src", "dst", "date", "sum_kzt"},
 }
+ROW_LIMITS = {"nodes.parquet": 5000, "edges.parquet": 20000, "transactions.parquet": 200000}
+MAX_EXPANDED_BYTES = 128 * 1024 * 1024
 
 
 class InputError(ValueError):
@@ -24,9 +27,16 @@ def validate_data(data_dir: Path, min_tx_kzt: int = 0, max_depth: int = 4) -> di
         if not path.is_file():
             raise InputError(f"Не найден {name}")
         try:
+            metadata = pq.ParquetFile(path, thrift_string_size_limit=2 * 1024 * 1024,
+                                      thrift_container_size_limit=100000).metadata
+            expanded_bytes = sum(metadata.row_group(i).total_byte_size for i in range(metadata.num_row_groups))
+            if metadata.num_rows > ROW_LIMITS[name] or metadata.num_columns > 64 or expanded_bytes > MAX_EXPANDED_BYTES:
+                raise InputError(f"{name}: превышен лимит локального расчёта ({ROW_LIMITS[name]} строк, 64 колонки, 128 МБ после распаковки)")
             table = pd.read_parquet(path)
+        except InputError:
+            raise
         except Exception as exc:
-            raise InputError(f"Не удалось прочитать {name}: {exc}") from exc
+            raise InputError(f"Не удалось прочитать {name}: требуется корректный Parquet") from exc
         missing = columns - set(table.columns)
         if missing:
             raise InputError(f"{name}: отсутствуют колонки {', '.join(sorted(missing))}")
