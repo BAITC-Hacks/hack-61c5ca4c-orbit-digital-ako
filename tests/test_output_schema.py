@@ -21,7 +21,6 @@ OUT_DIR = MONEY_GRAPH / "out"
 DATA_DIR = MONEY_GRAPH / "data"
 
 ROLES = {"consolidator", "transit", "distributor", "terminal", "coordinator", "peripheral"}
-EXTENDED_ROLES = ROLES | {"truncated"}  # расширение словаря, задокументировано в README
 EXPECTED_N_NODES = 2248
 EVIDENCE_MAX_CHARS = 200
 TOP_NODES_MIN_ROWS = 20
@@ -64,12 +63,18 @@ def test_nodes_roles_required_columns_are_filled(nodes_roles):
 
 
 def test_role_is_within_documented_vocabulary(nodes_roles):
-    bad = set(nodes_roles["role"]) - EXTENDED_ROLES
-    assert not bad, f"role вне словаря ТЗ (даже с расширением): {bad}"
+    bad = set(nodes_roles["role"]) - ROLES
+    assert not bad, f"role вне словаря ТЗ (6 значений): {bad}"
+
+
+def test_top_nodes_role_is_required_and_strict(top_nodes):
+    assert "role" in top_nodes.columns, "top_nodes.csv: нет обязательной колонки role"
+    bad = set(top_nodes["role"]) - ROLES
+    assert not bad, f"top_nodes.csv: role вне словаря ТЗ (6 значений): {bad}"
 
 
 def test_role_base_is_strictly_within_tz_vocabulary(nodes_roles):
-    # role_base — подстраховка для механической проверки без учёта расширения словаря
+    # role_base не заменяет строгую проверку обязательной колонки role.
     assert "role_base" in nodes_roles.columns
     bad = set(nodes_roles["role_base"]) - ROLES
     assert not bad, f"role_base вне словаря ТЗ (6 значений): {bad}"

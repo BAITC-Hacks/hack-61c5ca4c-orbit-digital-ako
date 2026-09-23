@@ -23,7 +23,7 @@ from mg.pipeline import priority
 from mg.paths import money_paths
 from mg.taint import TaintModel
 from mg.report import render_report
-from mg.export import safe_csv
+from mg.export import safe_csv, contract_roles, role_csv_bytes
 from mg.features import temporal_features
 from . import storage as s, jobs
 from .schemas import ProjectCreate, Mapping, Selection, Feedback, Case, ConfigPatch, PreviewMapping
@@ -516,7 +516,7 @@ def export_selection(pid: str, body: Selection):
     ids = list(dict.fromkeys(body.ids))
     if any(gid not in df.index for gid in ids):
         raise HTTPException(422, 'Выбранный узел отсутствует в проекте')
-    content = safe_csv(df.loc[ids].reset_index()).to_csv(index=False).encode('utf-8-sig')
+    content = safe_csv(contract_roles(df.loc[ids].reset_index())).to_csv(index=False).encode('utf-8-sig')
     return StreamingResponse(io.BytesIO(content), media_type='text/csv; charset=utf-8', headers={'Content-Disposition':'attachment; filename=selected_nodes.csv'})
 
 @app.get('/api/projects/{pid}/export/{kind}')
@@ -527,11 +527,16 @@ def export(pid: str, kind: str):
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer,'w',zipfile.ZIP_DEFLATED) as archive:
             for name in allowed:
-                archive.write(output/name,name)
+                if name in ('nodes_roles.csv', 'top_nodes.csv'):
+                    archive.writestr(name, role_csv_bytes(output/name))
+                else:
+                    archive.write(output/name,name)
         buffer.seek(0)
         return StreamingResponse(buffer,media_type='application/zip',headers={'Content-Disposition':'attachment; filename=analysis.zip'})
     if kind not in allowed:
         raise HTTPException(404,'Выгрузка не найдена')
+    if kind in ('nodes_roles.csv', 'top_nodes.csv'):
+        return StreamingResponse(io.BytesIO(role_csv_bytes(output/kind)), media_type='text/csv; charset=utf-8', headers={'Content-Disposition':f'attachment; filename={kind}'})
     return FileResponse(output/kind,filename=kind)
 
 from .assistant import router as assistant_router
