@@ -6,20 +6,25 @@
 
 ## Запуск (одна команда)
 
+Нужен **Python 3.10+** (используется синтаксис `X | None` в аннотациях типов).
+
 ```bash
 pip install -r requirements.txt
-python run.py            # data/ → out/, ~8 секунд на ноутбуке
+python run.py            # data/ → out/, ~8-15 секунд на ноутбуке
+python check.py          # проверка выгрузок на соответствие схеме ТЗ → печатает "OK"
 ```
 
 Затем открыть `out/viewer.html` в браузере. Файл полностью офлайн: библиотека графа встроена, интернет не нужен.
 
 Параметры: `--data <папка с parquet>`, `--out <папка выгрузок>`, `--config config.json`, `--llm` (опционально, см. ниже).
 
+Проверено на чистом venv (Python 3.10.9, только `pip install -r requirements.txt`) — пайплайн и валидатор отрабатывают без ручных шагов.
+
 ## Что на выходе
 
 | Файл | Содержимое |
 |---|---|
-| `nodes_roles.csv` | 2 248 строк: `gid, role, role_score, cluster_id, priority_score, evidence` + все метрики, на которых построена роль |
+| `nodes_roles.csv` | 2 248 строк: `gid, role, role_base, role_score, cluster_id, priority_score, evidence` + все метрики, на которых построена роль. `role_base` — та же роль строго из 6 слов словаря ТЗ (`truncated` → `peripheral`), на случай механической проверки без учёта расширения словаря |
 | `clusters.csv` | 71 кластер: `cluster_id, n_nodes, n_seed, sum_kzt_internal, top_gids, hypothesis` |
 | `top_nodes.csv` | топ-30: `rank, gid, role, priority_score, why` |
 | `requests.csv` | что запросить дальше, чтобы закрыть слепые зоны (559 запросов трёх типов) |
