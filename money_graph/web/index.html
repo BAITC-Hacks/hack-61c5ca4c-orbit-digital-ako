@@ -8,10 +8,12 @@
   <title>Граф денег · Анализ сети</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/workspace.css">
   <script src="/vendor/vis-network.min.js" defer></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#workspace">Перейти к анализу</a>
   <header class="topbar">
     <div class="brand"><span class="brand-icon">◈</span><div><strong>Граф денег</strong><small>Рабочее место AML аналитика</small></div></div>
     <div class="case-controls">
@@ -19,42 +21,61 @@
       <button id="upload-open" class="button primary" type="button">+ Загрузить данные</button>
     </div>
   </header>
-  <div id="status" class="status" role="status" aria-live="polite">Загрузка кейса…</div>
+  <section class="page-intro"><div><span class="kicker">АНАЛИТИКА / ТРАНЗАКЦИОННАЯ СЕТЬ</span><h1>От переводов — к структуре сети</h1><p>Исследуйте связи, проверяйте гипотезы и определяйте приоритет анализа.</p></div><a class="button export-link" href="#results">↓ Выгрузить результаты</a></section>
+  <div class="status-line"><span id="status" class="status" role="status" aria-live="polite">Загрузка кейса…</span><button id="retry" class="button" type="button" hidden>Повторить загрузку</button></div>
   <section class="metrics" aria-label="Сводка">
     <div class="metric"><span>Узлы</span><strong id="m-nodes">—</strong></div>
     <div class="metric"><span>Seed</span><strong id="m-seeds">—</strong></div>
     <div class="metric"><span>Переводы</span><strong id="m-transactions">—</strong></div>
     <div class="metric"><span>Кластеры</span><strong id="m-clusters">—</strong></div>
-    <div class="metric wide"><span>Период анализа</span><strong id="m-period">—</strong></div>
+    <div class="metric wide"><span>Даты переводов</span><strong id="m-period">—</strong></div>
   </section>
-  <main class="workspace">
+  <div id="data-notice" class="data-notice">Результаты описывают выбранную аналитиком сеть. Роль — гипотеза для проверки, не вывод о вине.</div>
+  <main class="workspace" id="workspace" aria-busy="true">
     <aside class="panel navigation">
-      <div class="panel-head"><span class="kicker">РАССЛЕДОВАНИЕ</span><h1>Найти значимые узлы</h1></div>
+      <div class="panel-head"><span class="kicker">С ЧЕГО НАЧАТЬ</span><h2>Очередь проверки</h2></div>
       <div class="search"><label for="search">Поиск по gid</label><div class="inline"><input id="search" type="search" inputmode="numeric" placeholder="Введите полный gid или часть"><button id="search-go" class="button" type="button">Найти</button></div><small id="search-hint">Поиск по всем узлам кейса</small></div>
-      <div class="tabs" role="tablist"><button class="tab active" data-tab="top" type="button">Приоритет</button><button class="tab" data-tab="clusters" type="button">Кластеры</button><button class="tab" data-tab="requests" type="button">Запросы</button></div>
+      <div class="tabs" role="tablist" aria-label="Списки анализа"><button id="tab-top" class="tab active" role="tab" aria-selected="true" aria-controls="list" data-tab="top" type="button">Приоритет</button><button id="tab-clusters" class="tab" role="tab" aria-selected="false" aria-controls="list" tabindex="-1" data-tab="clusters" type="button">Кластеры</button><button id="tab-requests" class="tab" role="tab" aria-selected="false" aria-controls="list" tabindex="-1" data-tab="requests" type="button">Запросы</button></div>
       <div class="filters"><select id="role-filter" aria-label="Роль"><option value="">Все роли</option></select><label><input id="seed-only" type="checkbox"> Только seed</label></div>
-      <div id="list" class="result-list" aria-live="polite"></div>
+      <div id="list" class="result-list" role="tabpanel" aria-labelledby="tab-top" tabindex="0"></div>
+      <div class="pagination"><button id="page-prev" class="button" type="button" aria-label="Предыдущая страница">←</button><span id="page-info" role="status"></span><button id="page-next" class="button" type="button" aria-label="Следующая страница">→</button></div>
     </aside>
     <section class="panel canvas-panel">
-      <div class="canvas-head"><div><span class="kicker">СХЕМА ПЕРЕВОДОВ</span><h2 id="graph-heading">Окружение узла</h2><small id="graph-subtitle">Направление стрелки показывает движение денег</small></div><button id="fit" class="button" type="button">Уместить</button></div>
+      <div class="canvas-head"><div><span class="kicker">КАРТА СВЯЗЕЙ</span><h2 id="graph-heading">Окружение узла</h2><small id="graph-subtitle">Щелчок по связи открывает транзакции</small></div><button id="fullscreen" class="button" type="button" aria-pressed="false">Развернуть</button></div>
       <div class="toolbar">
         <label>Связи <select id="direction"><option value="both">Все</option><option value="in">Входящие</option><option value="out">Исходящие</option></select></label>
         <label>Глубина <select id="hops"><option value="1">1 хоп</option><option value="2">2 хопа</option><option value="3">3 хопа</option></select></label>
         <label>Раскладка <select id="layout"><option value="free">Свободная</option><option value="flow">По хопам</option></select></label>
+        <label>Узлов <select id="node-limit"><option value="40">40</option><option value="100">100</option><option value="220">220</option></select></label>
         <button id="expand" class="button" type="button">+ Соседи</button>
         <button id="hide-node" class="button" type="button">Скрыть узел</button>
         <button id="restore" class="button" type="button">Вернуть</button>
       </div>
-      <div class="graph-wrap"><div id="graph" role="img" aria-label="Интерактивный граф переводов"></div><div id="graph-empty" class="graph-empty" hidden></div><div class="graph-tip">Перетаскивайте узлы · колесо — масштаб · щелчок — карточка</div></div>
-      <details class="appearance"><summary>Фигуры, подписи и отображение</summary><div class="appearance-body"><div class="appearance-options"><label><input id="node-labels" type="checkbox" checked> Подписи gid</label><label><input id="edge-labels" type="checkbox"> Суммы на связях</label><label><input id="pin-node" type="checkbox"> Закрепить выбранный узел</label><button id="reset-layout" class="button" type="button">Сбросить расположение</button></div><p>Форма и цвет обозначают роль; двойная рамка — seed. Формы можно менять для каждого кейса.</p><div id="shape-settings" class="shape-grid"></div></div></details>
+      <div class="graph-wrap"><div id="graph" aria-label="Интерактивный граф переводов"></div><div id="graph-empty" class="graph-empty" hidden></div><div class="zoom-controls"><button id="zoom-in" type="button" class="button" aria-label="Увеличить масштаб">+</button><button id="zoom-out" type="button" class="button" aria-label="Уменьшить масштаб">−</button><button id="fit" class="button" type="button">Уместить</button></div><div class="graph-tip">Узел — карточка · связь — переводы · двойной щелчок — окружение</div></div>
+      <details class="appearance"><summary>Легенда и оформление схемы</summary><div class="appearance-body"><div class="appearance-options"><label><input id="node-labels" type="checkbox" checked> Подписи gid</label><label><input id="edge-labels" type="checkbox"> Суммы на связях</label><label><input id="pin-node" type="checkbox"> Закрепить выбранный узел</label><button id="reset-layout" class="button" type="button">Сбросить расположение</button></div><p>Форма и цвет — роль. Толстая рамка — seed. Размер — приоритет. Доступны геометрические фигуры и пиктограммы.</p><div id="shape-settings" class="shape-grid"></div></div></details>
       <div class="graph-footer"><span id="graph-count">—</span><span>Роли и связи — гипотезы по доступной выборке</span></div>
     </section>
     <aside class="panel inspector"><div class="panel-head"><span class="kicker">КАРТОЧКА УЗЛА</span><h2>Почему этот узел?</h2></div><div id="node-card" class="card-content"><p class="muted">Выберите узел на графе или в списке.</p></div></aside>
   </main>
-  <section class="lower">
+  <section class="lower" id="results">
     <div class="panel model"><div class="panel-head"><span class="kicker">МОДЕЛЬНЫЙ СЦЕНАРИЙ</span><h2>Что меняется при исключении топ узлов</h2></div><div id="model-chart" class="model-chart"></div><small>Сценарий по наблюдаемому графу; это не прогноз реальной блокировки.</small></div>
-    <div class="panel exports"><div class="panel-head"><span class="kicker">РЕЗУЛЬТАТЫ ТЗ</span><h2>Выгрузки для аналитика</h2></div><div id="downloads" class="download-list"></div><small>Расчёт выполняется локально. Данные выбранного кейса не отправляются во внешние сервисы.</small></div>
+    <div class="panel exports"><div class="panel-head"><span class="kicker">ПРОДОЛЖИТЬ ПРОВЕРКУ</span><h2>Выгрузки выбранного кейса</h2></div><div id="downloads" class="download-list"></div><small>CSV содержат полный результат анализа, включая узлы, не показанные на схеме.</small></div>
   </section>
-  <dialog id="upload-dialog"><form id="upload-form"><div class="dialog-head"><div><span class="kicker">НОВЫЙ КЕЙС</span><h2>Загрузить выгрузку переводов</h2></div><button id="upload-close" class="icon-button" type="button" aria-label="Закрыть">×</button></div><p>Выберите три Parquet-файла. Система проверит схему и согласованность рёбер с транзакциями, затем пересчитает роли и приоритеты.</p><label>Название кейса<input name="label" maxlength="80" value="Новый анализ" required></label><label>Порог отбора транзакций, KZT<input name="min_tx_kzt" type="number" min="0" max="1000000000" value="5000" required></label><label>nodes.parquet<input name="nodes" type="file" accept=".parquet" required></label><label>edges.parquet<input name="edges" type="file" accept=".parquet" required></label><label>transactions.parquet<input name="transactions" type="file" accept=".parquet" required></label><div id="upload-error" class="error" role="alert" hidden></div><div class="dialog-actions"><button id="upload-submit" class="button primary" type="submit">Проверить и рассчитать</button></div></form></dialog>
+  <dialog id="upload-dialog" aria-labelledby="upload-title">
+    <form id="upload-form">
+      <div class="dialog-head"><div><span class="kicker">НОВЫЙ КЕЙС</span><h2 id="upload-title">Загрузить выгрузку переводов</h2></div><button id="upload-close" class="icon-button" type="button" aria-label="Закрыть">×</button></div>
+      <p>Три Parquet-файла, до 64 МБ каждый. Проверим схему, суммы и связи, затем рассчитаем роли. На объёме ТЗ расчёт занимает несколько секунд.</p>
+      <label>Название кейса<input name="label" maxlength="80" value="Новый анализ" required></label>
+      <label>Порог отбора транзакций, KZT<input name="min_tx_kzt" type="number" min="0" max="1000000000" value="5000" required></label>
+      <label>Граница выгрузки, хопов<input name="max_depth" type="number" min="1" max="4" value="4" required></label>
+      <small>Укажите глубину сбора данных. Отсутствие исходящих на границе обхода не означает, что деньги осели.</small>
+      <label>nodes.parquet<input name="nodes" type="file" accept=".parquet" required></label>
+      <label>edges.parquet<input name="edges" type="file" accept=".parquet" required></label>
+      <label>transactions.parquet<input name="transactions" type="file" accept=".parquet" required></label>
+      <div id="upload-error" class="error" role="alert" hidden></div>
+      <div class="dialog-actions"><button id="upload-submit" class="button primary" type="submit">Проверить и рассчитать</button></div>
+    </form>
+  </dialog>
+  <dialog id="transactions-dialog" aria-labelledby="transactions-title"><div class="transaction-content"><div class="dialog-head"><div><span class="kicker">ИСХОДНЫЕ ДАННЫЕ</span><h2 id="transactions-title">Переводы по связи</h2></div><button id="transactions-close" class="icon-button" type="button" aria-label="Закрыть">×</button></div><p id="transaction-pair"></p><div id="transaction-rows" aria-live="polite"></div><div class="pagination"><button id="tx-prev" class="button" type="button">← Назад</button><span id="tx-info"></span><button id="tx-next" class="button" type="button">Далее →</button></div></div></dialog>
 </body>
 </html>
