@@ -7,6 +7,8 @@ type Selection = {
   scenarios: Simulation[];
 };
 type State = {
+  shortcuts: boolean;
+  setShortcuts: (enabled: boolean) => void;
   theme: "light" | "dark";
   language: string;
   selections: Record<string, Selection>;
@@ -25,6 +27,8 @@ export const emptySelection: Selection = {
 export const useWorkspace = create<State>()(
   persist(
     (set) => ({
+      shortcuts: true,
+      setShortcuts: (shortcuts) => set({ shortcuts }),
       theme: matchMedia("(prefers-color-scheme: dark)").matches
         ? "dark"
         : "light",

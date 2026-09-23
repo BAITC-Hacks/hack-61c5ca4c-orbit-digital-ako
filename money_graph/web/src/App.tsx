@@ -67,6 +67,15 @@ function Shell() {
   const [search, setSearch] = useState("");
   const input = useRef<HTMLInputElement>(null);
   const state = useWorkspace();
+  const previousPath = useRef(location.pathname);
+  useEffect(() => {
+    if (previousPath.current !== location.pathname) {
+      document.getElementById("main-content")?.focus();
+      previousPath.current = location.pathname;
+    }
+    document.title =
+      t(location.pathname.split("/").pop() || "projects") + " · " + t("brand");
+  }, [location.pathname, t]);
   const project = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api<Project>(root(pid)),
@@ -92,6 +101,7 @@ function Shell() {
         setCommand(true);
       }
       if ((e.target as HTMLElement).matches("input,textarea,select")) return;
+      if (!useWorkspace.getState().shortcuts) return;
       if (e.key === "/") {
         e.preventDefault();
         setCommand(true);
@@ -214,7 +224,7 @@ function Shell() {
             <span className="avatar">AN</span>
           </div>
         </header>
-        <main id="main-content">
+        <main id="main-content" tabIndex={-1}>
           <Routes>
             <Route path="/" element={<Projects />} />
             <Route path="/projects/:pid/upload" element={<UploadWizard />} />
@@ -244,6 +254,7 @@ function Shell() {
       </div>
       <Modal
         open={command}
+        returnSelector=".command-button"
         onClose={() => setCommand(false)}
         title={t("search")}
       >
@@ -284,7 +295,15 @@ function Shell() {
           </div>
         )}
       </Modal>
-      <Modal open={help} onClose={() => setHelp(false)} title={t("help")}>
+      <Modal open={help} onClose={() => setHelp(false)} title={t("help")} returnSelector=".sidebar-footer button">
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={state.shortcuts}
+            onChange={(e) => state.setShortcuts(e.target.checked)}
+          />
+          {t("characterShortcuts")}
+        </label>
         <p>{t("helpText")}</p>
         <hr />
         <p>{t("glossary")}</p>
