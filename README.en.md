@@ -19,6 +19,9 @@ This is a local, single-analyst MVP. Scores and roles are investigation hypothes
 - [Update, stop and back up](#update-stop-and-back-up)
 - [Run without Docker](#run-without-docker)
 - [Development and checks](#development-and-checks)
+- [Specification: reproducible baseline and exports](#specification-reproducible-baseline-and-exports)
+- [Formal role criteria and thresholds](#formal-role-criteria-and-thresholds)
+- [Plan for approximately one million nodes](#plan-for-approximately-one-million-nodes)
 - [Troubleshooting](#troubleshooting)
 - [Model and deployment boundaries](#model-and-deployment-boundaries)
 - [Documentation and contributing](#documentation-and-contributing)
@@ -290,6 +293,62 @@ python check.py
 `check.py` validates the bundled 2,248-node input and its required output schema. It is not a validator for arbitrary user datasets or proof of model accuracy.
 
 CSV exports restrict `role` to the six specification values: `consolidator`, `transit`, `distributor`, `terminal`, `coordinator` and `peripheral`. A node cut off at the collection boundary is exported as `role=peripheral`, `role_detail=truncated`, `is_truncated=True`, with `role_base=role`. This mapping satisfies the export vocabulary; it does not reclassify the node's behavior. All 444 boundary nodes in the baseline remain present, and the analytical graph, Parquet results and priority calculation continue to distinguish `truncated`. The same contract applies to CLI exports, selected-row CSV, individual CSV and ZIP downloads, including downloads of older cached results.
+
+## Specification: reproducible baseline and exports
+
+The hackathon's five required capabilities are a reproducible pipeline, a role/score/explanation for every node, explicit role criteria, clustering, and a ranked list with a searchable directed graph. The bundled input contains **2,248 nodes, 3,119 edges and 4,840 transactions**. It covers July 2026, starts from 81 seeds, follows outgoing transfers to depth 4 and omits transfers below 5,000 KZT. It contains no customer identity attributes; the pipeline does not enrich accounts from external sources.
+
+From the repository root, one command builds if necessary and runs the complete baseline pipeline:
+
+```sh
+docker compose run --build --rm --no-deps app python run.py --out /data/baseline
+```
+
+Results persist in the Compose data volume under `/data/baseline`. Verify those same outputs with:
+
+```sh
+docker compose run --rm --no-deps app python check.py --out /data/baseline
+```
+
+The specification's acceptance target is **at most five minutes from the supplied raw Parquet files to the exports**, locally on an ordinary laptop. This measures computation, excluding initial image builds and dependency downloads. It is not a guarantee for arbitrary uploaded graphs. Docker, the CLI and the local graph viewer require no API key, GPU or paid cloud service.
+
+On **2026-09-23**, one baseline CLI run with the already built Docker image completed in **8.88 seconds** on the development computer and `check.py` passed. This is a single-machine measurement, not a guarantee for other hardware or data.
+
+The three required CSV schemas are below; additional diagnostic columns may follow the required fields:
+
+- **`nodes_roles.csv`** — exactly **2,248 rows** for the supplied dataset: `gid:int64`, `role:str`, `role_score:float [0,1]`, `cluster_id:int`, `priority_score:float [0,1]`, `evidence:str`. Every node has a role, score, cluster and nonempty human-readable evidence of **at most 200 characters**. The CSV role vocabulary is `consolidator`, `transit`, `distributor`, `terminal`, `coordinator`, `peripheral`.
+- **`clusters.csv`** — one row per cluster: `cluster_id:int`, `n_nodes:int`, `n_seed:int`, `sum_kzt_internal:float`, `top_gids:str`, `hypothesis:str`. Internal turnover sums edges within the cluster; `top_gids` contains semicolon-separated identifiers. Clustering uses Louvain on the undirected, amount-weighted projection; isolated nodes receive cluster 0. Direction is preserved for flow and role analysis.
+- **`top_nodes.csv`** — **at least 20 rows**, 30 by default: `rank:int`, `gid:int64`, `role:str`, `priority_score:float [0,1]`, `why:str`. Ranks run from 1 in descending priority order and each entry has a human-readable reason. The interface supports finding a supplied `gid` and inspecting its connections.
+
+The `int64` identifier contract applies to the supplied numeric baseline. Universal projects retain string identifiers in the analytical kernel/API/browser; numeric CLI identifiers are converted only when reversible. Boundary nodes remain present: CSV uses `role=peripheral`, `role_detail=truncated`, `is_truncated=True`, `role_base=role`; internal calculations retain `truncated`. A role score is a heuristic rule-strength score, not a calibrated probability. Priority combines normalized factors with default weights: marked inflow 0.25, removal impact 0.25, role 0.20, betweenness 0.10, reachable seed sources 0.10 and turnover 0.10.
+
+## Formal role criteria and thresholds
+
+These are the current default **absolute-mode** rules in [`mg/explain.py`](money_graph/mg/explain.py), [`mg/roles.py`](money_graph/mg/roles.py) and [`config.json`](money_graph/config.json). `in_deg`/`out_deg` count distinct counterparties; `pass_through = outgoing amount / incoming amount`; `fanout_ratio = out_deg / max(in_deg,1)`. `fast_share` is the share of dated outgoing amounts whose nearest preceding incoming transfer has an integer-day lag of at most 2 days. It measures time proximity, not allocation of the same money.
+
+**First matching rule wins:** isolated peripheral → truncated → coordinator → distributor → consolidator → transit → terminal → fallback peripheral. Missing metrics do not satisfy comparisons.
+
+- **`coordinator`:** `in_deg >= 5` AND `out_deg >= 5` AND `betweenness > 0` AND betweenness at least the graph's **95th percentile**.
+- **`distributor`:** `out_deg >= 10` AND `fanout_ratio >= 3`.
+- **`consolidator`:** `in_deg >= 4`. For non-seeds, `pass_through <= 0.5` increases `role_score` by 0.15, capped at 1; it is **not an additional condition for assigning the role**.
+- **`transit`:** not a seed, `in_deg > 0`, `out_deg > 0`, AND either `0.7 <= pass_through <= 1.3`, OR both `fast_share >= 0.7` and `pass_through >= 0.5`. Without dates only the amount-ratio branch can match.
+- **`terminal`:** `out_deg = 0`, AND either `incoming amount >= 100,000` in the project's currency or `in_deg >= 2`, AND the configured collection depth is unknown **or** the node's known depth is smaller than that boundary. This is an observed-network hypothesis, not proof of retained funds.
+- **`peripheral`:** an isolated node (`in_deg = out_deg = 0`) is assigned first; otherwise this is the fallback when no preceding rule matches. CSV also maps internal `truncated` nodes to this vocabulary value while preserving the diagnostic flags.
+
+The **truncation guard** runs before the substantive roles: `depth == max_depth` AND `out_deg == 0` gives internal role `truncated` when the collection boundary is known. For the supplied depth-4 dataset this preserves all 444 boundary nodes without treating them as terminal recipients. Seed inflow may be missing, so seeds cannot receive the transit role based on an unreliable balance ratio.
+
+In **adaptive mode**, the four degree cutoffs for coordinator (incoming/outgoing), distributor (outgoing) and consolidator (incoming) become `max(configured cutoff, corresponding graph-wide 99th percentile)`. Other thresholds remain as configured. Each project stores its configuration, and the inspector exposes the same ordered checks used by role assignment. No measured role accuracy is claimed without labeled ground truth.
+
+## Plan for approximately one million nodes
+
+This is the textual scaling plan requested by the specification, **not a claim that the current MVP supports a million-node workload**. Existing sampling and candidate limits help smaller networks but do not establish that capacity.
+
+1. **Import and storage:** process columnar Parquet/Arrow batches, validate and aggregate edges incrementally, partition by period/project, and persist compact integer-ID dictionaries. Avoid materializing full input copies in pandas.
+2. **Graph computation:** replace Python-object NetworkX graphs with sparse CSR/CSC arrays and compiled graph routines; evaluate a CPU implementation such as igraph/NetworKit against the reference rules. Preserve deterministic seeds, metric definitions and documented approximation error.
+3. **Expensive metrics and scenarios:** sample betweenness sources; restrict cycle/path searches; shortlist removal candidates from inexpensive metrics; run detailed blocking scenarios on that shortlist rather than simulate every node. Mark unevaluated impacts as missing, not zero, and retain checks against small exact graphs.
+4. **Execution and persistence:** introduce a durable job queue and process workers with checkpoints, cancellation and memory/time budgets. Move job/result metadata to shared transactional storage before adding workers or replicas; the present in-memory queue cannot be scaled by changing a worker count.
+5. **User interface:** serve paginated tables, bounded ego graphs and cluster summaries from indexed results. Use progressive expansion and level-of-detail rendering instead of sending one million vertices to the browser.
+6. **Validation:** benchmark a million-node synthetic suite across sparse/dense degree distributions and transaction counts; record peak memory, runtime, hardware and approximation quality. Compare roles, priority rankings and scenario effects with exact smaller references before setting an operational service target.
 
 ## Troubleshooting
 
