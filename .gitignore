@@ -12,6 +12,12 @@ env/
 *.key
 *.pem
 money_graph/.local/
+money_graph/projects/
+node_modules/
+playwright-report/
+test-results/
+.pytest_cache/
+*.tsbuildinfo
 
 # IDE
 .idea/

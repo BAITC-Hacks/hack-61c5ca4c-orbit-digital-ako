@@ -1,0 +1,15 @@
+{
+  "isolated": "0 observed transfers{threshold}. Request account details before assessing a role.",
+  "peripheral": "No specific pattern: {incoming} from {in_deg}, {outgoing} to {out_deg}; onward {pt}.",
+  "coordinator": "Coordination indicators: {in_deg} payers, {out_deg} recipients; top {bc_top}% betweenness, reachable from {seed_sources} seeds.{seed_note}",
+  "distributor": "Distribution indicators: {out_deg} recipients versus {in_deg} payers; {outgoing} in {out_tx} transfers.{seed_note}",
+  "consolidator": "Collection indicators: {in_deg} payers, {incoming} received; onward {pt}, up to {sync} payers/day.{seed_note}",
+  "transit": "Transit indicators: {incoming} received; onward {pt}.{temporal}",
+  "terminal": "Retention indicators: {incoming} from {in_deg} payers; 0 observed outgoing transfers{threshold}.",
+  "truncated": "Collection boundary at depth {depth}: outgoing transfers unobserved. {incoming} from {in_deg}; onward estimate {onward}.",
+  "seed_note": " Seed: incoming may be incomplete.",
+  "temporal": " {fast}% sent within {lag} days of receipt.",
+  "cluster": "Hypothesis: {core} collection/coordination, {distributors} distribution, {transit} transit nodes; {seeds} seeds, {truncated} boundary nodes. Internal amount {amount}.",
+  "unknown": "n/a",
+  "external": "{pt} (possible unobserved income)"
+}

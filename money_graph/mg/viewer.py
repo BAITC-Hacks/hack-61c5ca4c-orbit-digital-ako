@@ -24,7 +24,7 @@ ROLE_RU = {
     "distributor": "Распределитель",
     "transit": "Транзит",
     "terminal": "Конечный получатель",
-    "truncated": "Обрезан на 4-м хопе",
+    "truncated": "Граница выгрузки",
     "peripheral": "Периферия",
 }
 
@@ -50,7 +50,7 @@ def write_viewer(path, df, edges, clusters, top, res, summary, vis_js, requests,
     nodes = [{
         "id": str(gid), "role": row.role, "rs": _num(row.role_score, 2),
         "cl": int(row.cluster_id), "pr": _num(row.priority_score),
-        "ev": row.evidence, "d": int(row.depth), "seed": bool(row.is_seed),
+        "ev": row.evidence, "d": int(row.depth) if pd.notna(row.depth) else None, "seed": bool(row.is_seed),
         "ind": int(row.in_deg), "outd": int(row.out_deg),
         "ink": _num(row.in_kzt, 0), "outk": _num(row.out_kzt, 0),
         "pt": _num(row.pass_through, 3), "ts": _num(row.taint_share, 3),

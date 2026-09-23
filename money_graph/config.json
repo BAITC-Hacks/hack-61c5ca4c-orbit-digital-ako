@@ -1,40 +1,31 @@
 {
   "_comment": "Все пороги ролей и веса приоритета. Меняются здесь, код не трогаем.",
-  "period_end": "2026-07-31",
   "min_tx_kzt": 5000,
   "max_depth": 4,
   "fast_lag_days": 2,
-
   "roles": {
     "coordinator_min_in_deg": 5,
     "coordinator_min_out_deg": 5,
     "coordinator_min_betweenness_pct": 0.95,
-
     "distributor_min_out_deg": 10,
     "distributor_fanout_ratio": 3.0,
-
     "consolidator_min_in_deg": 4,
     "consolidator_max_pass_through": 0.5,
-
     "transit_pt_low": 0.7,
     "transit_pt_high": 1.3,
     "transit_min_fast_share": 0.7,
-
     "terminal_min_in_kzt": 100000,
     "terminal_min_in_deg": 2,
-
     "truncated_request_p": 0.5
   },
-
   "priority_weights": {
     "tainted_in": 0.25,
     "block_impact": 0.25,
-    "role": 0.20,
-    "betweenness": 0.10,
-    "seed_sources": 0.10,
-    "turnover": 0.10
+    "role": 0.2,
+    "betweenness": 0.1,
+    "seed_sources": 0.1,
+    "turnover": 0.1
   },
-
   "role_weight": {
     "coordinator": 1.0,
     "consolidator": 0.9,
@@ -44,10 +35,16 @@
     "terminal": 0.3,
     "peripheral": 0.0
   },
-
   "taint_iterations": 8,
   "louvain_seed": 42,
   "louvain_resolution": 1.0,
   "top_n": 30,
-  "resilience_max_n": 30
+  "resilience_max_n": 30,
+  "currency": "KZT",
+  "threshold_mode": "absolute",
+  "cycle_limit": 100000,
+  "block_top_k": 1000,
+  "betweenness_samples": 500,
+  "language": "ru",
+  "upload_limit_mb": 500
 }

@@ -6,7 +6,7 @@
 import networkx as nx
 import pandas as pd
 
-from .roles import kzt
+from .roles import kzt, templates
 
 
 def cluster(G: nx.DiGraph, cfg: dict) -> pd.Series:
@@ -21,33 +21,12 @@ def cluster(G: nx.DiGraph, cfg: dict) -> pd.Series:
     return pd.Series({v: labels.get(v, 0) for v in G.nodes}, name="cluster_id")
 
 
-def _hypothesis(n, n_seed, roles: pd.Series, internal, in_kzt_total):
+def _hypothesis(n, n_seed, roles, internal, in_kzt_total, cfg):
     rc = roles.value_counts()
-    g = lambda r: int(rc.get(r, 0))
-    trunc_share = g("truncated") / n
-    core = g("coordinator") + g("consolidator")
-    if n_seed and n == n_seed and internal == 0:
-        return f"Seed-клиенты без переводов ≥5 000 KZT в выгрузке ({n}). Структуру по данным не видно; нужен запрос."
-    parts = []
-    if core and n_seed >= 2:
-        parts.append(f"Контур сбора: {g('coordinator')} коорд. и {g('consolidator')} консолид. стягивают средства "
-                     f"{n_seed} seed; кандидат в ядро группы")
-    elif g("distributor"):
-        parts.append(f"Контур раздачи: {g('distributor')} распределит. рассылают средства по {n} счетам")
-    elif core:
-        parts.append(f"Точка сбора вне seed-ядра: {core} консолид./коорд.")
-    if g("transit") >= 3:
-        parts.append(f"{g('transit')} транзитных счетов — признаки цепочек проводки")
-    if g("terminal") / n >= 0.3:
-        parts.append(f"{g('terminal') / n:.0%} счетов — конечные получатели (деньги оседают)")
-    if trunc_share >= 0.4:
-        parts.append(f"{trunc_share:.0%} узлов обрезаны 4-м хопом — картина неполная, нужен след. хоп")
-    if not parts:
-        parts.append("Периферийная группа без выраженных ролей")
-    return ("; ".join(parts) + f". Внутр. оборот {kzt(internal)}.")[:300]
+    return templates(cfg.get("language", "ru"))["cluster"].format(core=int(rc.get("coordinator", 0) + rc.get("consolidator", 0)), distributors=int(rc.get("distributor", 0)), transit=int(rc.get("transit", 0)), seeds=n_seed, truncated=int(rc.get("truncated", 0)), amount=f'{kzt(internal)} {cfg.get("currency", "")}')[:300]
 
 
-def cluster_table(edges, df, roles, labels, priority) -> pd.DataFrame:
+def cluster_table(edges, df, roles, labels, priority, cfg=None) -> pd.DataFrame:
     e = edges.assign(cs=edges.src.map(labels), cd=edges.dst.map(labels))
     internal = e[e.cs == e.cd].groupby("cs").sum_kzt.sum()
     rows = []
@@ -60,7 +39,7 @@ def cluster_table(edges, df, roles, labels, priority) -> pd.DataFrame:
             "cluster_id": int(cid), "n_nodes": n, "n_seed": n_seed,
             "sum_kzt_internal": round(s_int, 2),
             "top_gids": ";".join(str(g) for g in top),
-            "hypothesis": _hypothesis(n, n_seed, roles.loc[idx, "role"], s_int, df.loc[idx, "in_kzt"].sum()),
+            "hypothesis": _hypothesis(n, n_seed, roles.loc[idx, "role"], s_int, df.loc[idx, "in_kzt"].sum(), cfg or {}),
             "n_consolidator": int((roles.loc[idx, "role"] == "consolidator").sum()),
             "n_coordinator": int((roles.loc[idx, "role"] == "coordinator").sum()),
             "n_truncated": int((roles.loc[idx, "role"] == "truncated").sum()),

@@ -1,0 +1,15 @@
+{
+  "isolated": "Іріктемеде 0 аударым{threshold}. Шот туралы ақпарат қажет.",
+  "peripheral": "Айқын белгі жоқ: {in_deg} төлеушіден {incoming}, {out_deg} алушыға {outgoing}; әрі қарай {pt}.",
+  "coordinator": "Үйлестіру белгілері: {in_deg} төлеуші, {out_deg} алушы; делдалдық топ-{bc_top}%, {seed_sources} бастапқы түйіннен қолжетімді.{seed_note}",
+  "distributor": "Тарату белгілері: {in_deg} төлеуші, {out_deg} алушы; {out_tx} аударымда {outgoing}.{seed_note}",
+  "consolidator": "Жинау белгілері: {in_deg} төлеуші, {incoming} кіріс; әрі қарай {pt}, күніне ең көбі {sync} төлеуші.{seed_note}",
+  "transit": "Транзит белгілері: {incoming} кіріс; әрі қарай {pt}.{temporal}",
+  "terminal": "Жинақталу белгілері: {in_deg} төлеушіден {incoming}; бақыланған шығыс аударымдар 0{threshold}.",
+  "truncated": "Жинау шекарасы, тереңдік {depth}: шығыс көрінбейді. {in_deg} төлеушіден {incoming}; жалғастыру бағасы {onward}.",
+  "seed_note": " Бастапқы түйін: кіріс толық болмауы мүмкін.",
+  "temporal": " {fast}% қаражат {lag} күн ішінде жіберілген.",
+  "cluster": "Болжам: {core} жинау/үйлестіру, {distributors} тарату, {transit} транзит түйіндері; {seeds} бастапқы, {truncated} шекаралық түйін. Ішкі айналым {amount}.",
+  "unknown": "белгісіз",
+  "external": "{pt} (іріктемеден тыс кіріс болуы мүмкін)"
+}

@@ -1,5 +1,6 @@
 """Загрузка данных и метрики узлов: структура, суммы, время, связь с seed."""
 from pathlib import Path
+from itertools import islice
 
 import networkx as nx
 import numpy as np
@@ -36,11 +37,10 @@ def temporal_features(tx: pd.DataFrame, lag_days: int) -> pd.DataFrame:
     m["lag"] = (m.out_date - m.in_date).dt.days
     m["fast"] = m.lag.le(lag_days)
 
-    f = m.groupby("gid").apply(
-        lambda d: pd.Series({
-            "fast_share": d.loc[d.fast, "sum_kzt"].sum() / d.sum_kzt.sum(),
-            "median_lag": d.lag.median(),
-        }), include_groups=False)
+    m["fast_amount"] = m.sum_kzt.where(m.fast, 0)
+    f = m.groupby("gid").agg(total=("sum_kzt", "sum"), fast_amount=("fast_amount", "sum"), median_lag=("lag", "median"))
+    f["fast_share"] = f.fast_amount / f.total
+    f = f[["fast_share", "median_lag"]]
 
     # синхронные поступления: сколько разных плательщиков прислали в один день
     sync = inc.groupby(["gid", "in_date"]).payer.nunique().groupby("gid").max().rename("sync_payers_max")
@@ -59,7 +59,7 @@ def compute_features(G, edges, nodes, tx, cfg) -> pd.DataFrame:
     df["in_tx"] = pd.Series(dict(G.in_degree(weight="n_tx")))
     df["out_tx"] = pd.Series(dict(G.out_degree(weight="n_tx")))
     df["pass_through"] = df.out_kzt / df.in_kzt.replace(0, np.nan)
-    df["truncated_by_depth"] = (df.depth == cfg.get("max_depth", 4)) & (df.out_deg == 0)
+    df["truncated_by_depth"] = (df.depth == cfg.get("max_depth")) & (df.out_deg == 0)
 
     # сколько разных seed-клиентов прямо платили узлу / косвенно достают до него
     df["seed_payers"] = edges[edges.src.isin(seeds)].groupby("dst").src.nunique()
@@ -72,7 +72,7 @@ def compute_features(G, edges, nodes, tx, cfg) -> pd.DataFrame:
     df["pays_to_seed"] = edges[edges.dst.isin(seeds)].groupby("src").dst.nunique()
 
     # посредничество (направленное, без весов — «сколько кратчайших маршрутов идёт через узел»)
-    bc = nx.betweenness_centrality(G, normalized=True)
+    bc = nx.betweenness_centrality(G, normalized=True, k=min(cfg.get("betweenness_samples", 500), len(G)) if len(G) > 5000 else None, seed=cfg.get("louvain_seed", 42))
     df["betweenness"] = pd.Series(bc)
     try:
         hubs, auth = nx.hits(G, max_iter=500)
@@ -83,7 +83,7 @@ def compute_features(G, edges, nodes, tx, cfg) -> pd.DataFrame:
 
     # короткие циклы (≤4 звена): деньги возвращаются к отправителю
     cyc_count = {}
-    for c in nx.simple_cycles(G, length_bound=4):
+    for c in islice(nx.simple_cycles(G, length_bound=4), cfg.get("cycle_limit", 100000)):
         for v in c:
             cyc_count[v] = cyc_count.get(v, 0) + 1
     df["cycles_le4"] = pd.Series(cyc_count)
@@ -92,7 +92,14 @@ def compute_features(G, edges, nodes, tx, cfg) -> pd.DataFrame:
            for v in comp}
     df["component"] = pd.Series(wcc)
 
-    df = df.join(temporal_features(tx, cfg["fast_lag_days"]))
+    dated = tx.dropna(subset=["date"])
+    if len(dated):
+        df = df.join(temporal_features(dated, cfg["fast_lag_days"]))
+    else:
+        for column in ("fast_share", "median_lag", "sync_payers_max"):
+            df[column] = np.nan
+        df["first_in"] = pd.NaT
+        df["last_in"] = pd.NaT
     fill0 = ["in_deg", "out_deg", "in_kzt", "out_kzt", "in_tx", "out_tx", "seed_payers", "seed_sources",
              "pays_to_seed", "cycles_le4", "sync_payers_max"]
     df[fill0] = df[fill0].fillna(0)

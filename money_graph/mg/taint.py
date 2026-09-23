@@ -24,6 +24,9 @@ class TaintModel:
         w = self.w
         if removed is not None and removed.any():
             w = np.where(removed[self.src] | removed[self.dst], 0.0, w)
+        if not self.seed.any():
+            incoming = np.bincount(self.dst, weights=w, minlength=self.n)
+            return np.zeros(self.n), np.zeros(self.n), float(w.sum())
         taint = self.seed.astype(float)
         w_in = np.bincount(self.dst, weights=w, minlength=self.n)
         for _ in range(self.iters):
@@ -36,19 +39,63 @@ class TaintModel:
         tainted_in = np.bincount(self.dst, weights=flow, minlength=self.n)
         return taint, tainted_in, flow.sum()
 
-    def block_impact(self) -> np.ndarray:
+    def block_impact(self, candidates=None) -> np.ndarray:
         """Доля всего меченого потока, которая исчезает, если заблокировать один узел."""
         _, _, total = self.propagate()
-        impact = np.zeros(self.n)
+        impact = np.zeros(self.n) if candidates is None else np.full(self.n, np.nan)
         if total <= 0:
             return impact
         removed = np.zeros(self.n, dtype=bool)
-        for i in range(self.n):
+        for i in (range(self.n) if candidates is None else candidates):
             removed[i] = True
             _, _, t = self.propagate(removed)
             impact[i] = (total - t) / total
             removed[i] = False
         return impact
+
+    def destination_flows(self, removed=None, source_limit=5, target_limit=8):
+        """Seed attribution at observed sinks; distinct from total edge turnover.
+
+        Other seed origins are grouped exactly in one channel. Every channel is
+        clamped at all seeds, matching the additive haircut propagation model.
+        """
+        removed = np.zeros(self.n, dtype=bool) if removed is None else removed
+        w = np.where(removed[self.src] | removed[self.dst], 0., self.w)
+        inc = np.bincount(self.dst, weights=w, minlength=self.n)
+        out = np.bincount(self.src, weights=w, minlength=self.n)
+        sinks = (out == 0) & (inc > 0) & ~removed
+        if not self.seed.any():
+            top = np.where(sinks)[0]
+            top = top[np.argsort(-inc[top])][:target_limit]
+            nodes = [{'name':'Observed transfers','kind':'source'}]+[{'name':str(self.gids[i]),'kind':'recipient'} for i in top]
+            links = [{'source':0,'target':j+1,'value':float(inc[i])} for j,i in enumerate(top)]
+            return {'nodes':nodes,'links':links,'basis':'observed_sink_receipts','total':float(inc[sinks].sum()),'shown':float(inc[top].sum())}
+        seeds = np.where(self.seed & ~removed)[0]
+        seeds = seeds[np.argsort(-out[seeds])]
+        channels = [[int(i)] for i in seeds[:source_limit]]
+        if len(seeds)>source_limit:
+            channels.append(seeds[source_limit:].tolist())
+        values = []
+        for channel in channels:
+            taint = np.zeros(self.n)
+            taint[channel] = 1.
+            for _ in range(self.iters):
+                tin = np.bincount(self.dst, weights=w*taint[self.src], minlength=self.n)
+                taint = np.divide(tin,inc,out=np.zeros(self.n),where=inc>0)
+                taint[self.seed] = 0.
+                taint[channel] = 1.
+                taint[removed] = 0.
+            values.append(np.bincount(self.dst, weights=w*taint[self.src], minlength=self.n))
+        if not values:
+            return {'nodes':[],'links':[],'basis':'traced_sink_receipts','total':0.,'shown':0.}
+        matrix = np.array(values)
+        totals = matrix.sum(axis=0)
+        targets = np.where(sinks & (totals > 0))[0]
+        targets = targets[np.argsort(-totals[targets])][:target_limit]
+        nodes = [{'name':str(self.gids[ch[0]]) if len(ch)==1 else 'Other seeds','kind':'source'} for ch in channels]
+        nodes += [{'name':str(self.gids[i]),'kind':'recipient'} for i in targets]
+        links = [{'source':a,'target':len(channels)+b,'value':float(matrix[a,i])} for a in range(len(channels)) for b,i in enumerate(targets) if matrix[a,i]>0]
+        return {'nodes':nodes,'links':links,'basis':'traced_sink_receipts','total':float(totals[sinks].sum()),'shown':float(totals[targets].sum())}
 
     def resilience_curve(self, order_gids, max_n: int, n_random: int = 20, rng_seed: int = 42):
         """Что происходит с сетью при блокировке топ-N по приоритету против N случайных узлов."""
