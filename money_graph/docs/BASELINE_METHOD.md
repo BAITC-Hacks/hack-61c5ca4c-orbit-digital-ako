@@ -55,7 +55,7 @@ python check.py          # проверка выгрузок на соответ
 
 | Файл | Содержимое |
 |---|---|
-| `nodes_roles.csv` | 2 248 строк: `gid, role, role_base, role_score, cluster_id, priority_score, evidence` + все метрики, на которых построена роль. `role_base` — та же роль строго из 6 слов словаря ТЗ (`truncated` → `peripheral`), на случай механической проверки без учёта расширения словаря |
+| `nodes_roles.csv` | 2 248 строк: `gid, role, role_base, role_score, cluster_id, priority_score, evidence` + метрики. В текущем CSV `role` и `role_base` строго из 6 слов ТЗ; обрезка сохранена в `role_detail=truncated` и `is_truncated=True`, базовая роль таких узлов — `peripheral`. Внутренний расчёт и граф сохраняют отдельную категорию обрезки |
 | `clusters.csv` | 71 кластер: `cluster_id, n_nodes, n_seed, sum_kzt_internal, top_gids, hypothesis` |
 | `top_nodes.csv` | топ-30: `rank, gid, role, priority_score, why` |
 | `requests.csv` | что запросить дальше, чтобы закрыть слепые зоны (559 запросов трёх типов) |

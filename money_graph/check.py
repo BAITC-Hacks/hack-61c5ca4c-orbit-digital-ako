@@ -9,12 +9,9 @@
 import sys
 from pathlib import Path
 
-sys.stdout.reconfigure(encoding="utf-8")
-
 import pandas as pd
 
 ROLES = ["consolidator", "transit", "distributor", "terminal", "coordinator", "peripheral"]
-EXTENDED_ROLES = ROLES + ["truncated"]  # "truncated" — расширение словаря, задокументировано в README
 EXPECTED_N_NODES = 2248
 EVIDENCE_MAX_CHARS = 200
 TOP_NODES_MIN_ROWS = 20
@@ -52,11 +49,11 @@ def check(out_dir: Path, data_dir: Path) -> list[str]:
         elif nr[c].isna().any():
             errors.append(f"nodes_roles.csv: есть пропуски в колонке {c}")
 
-    if "role" in nr.columns and not nr["role"].isin(EXTENDED_ROLES).all():
-        bad = sorted(set(nr.loc[~nr["role"].isin(EXTENDED_ROLES), "role"]))
-        errors.append(f"nodes_roles.csv: role вне словаря ТЗ (даже с расширением): {bad}")
+    if "role" in nr.columns and not nr["role"].isin(ROLES).all():
+        bad = sorted(set(nr.loc[~nr["role"].isin(ROLES), "role"].astype(str)))
+        errors.append(f"nodes_roles.csv: role вне словаря ТЗ (6 значений): {bad}")
 
-    # role_base — подстраховка на случай строгой проверки без учёта расширения
+    # Дополнительная колонка role_base не заменяет проверку обязательной role.
     if "role_base" in nr.columns and not nr["role_base"].isin(ROLES).all():
         bad = sorted(set(nr.loc[~nr["role_base"].isin(ROLES), "role_base"]))
         errors.append(f"nodes_roles.csv: role_base вне словаря ТЗ (6 значений): {bad}")
@@ -92,6 +89,12 @@ def check(out_dir: Path, data_dir: Path) -> list[str]:
         errors.append("clusters.csv: есть пустые hypothesis")
 
     # --- top_nodes.csv ----------------------------------------------------------
+    if "role" not in tn.columns:
+        errors.append("top_nodes.csv: отсутствует обязательная колонка role")
+    elif not tn["role"].isin(ROLES).all():
+        bad = sorted(set(tn.loc[~tn["role"].isin(ROLES), "role"].astype(str)))
+        errors.append(f"top_nodes.csv: role вне словаря ТЗ (6 значений): {bad}")
+
     if len(tn) < TOP_NODES_MIN_ROWS:
         errors.append(f"top_nodes.csv: {len(tn)} строк, требуется >= {TOP_NODES_MIN_ROWS}")
 
@@ -108,6 +111,7 @@ def check(out_dir: Path, data_dir: Path) -> list[str]:
 
 
 def main() -> None:
+    sys.stdout.reconfigure(encoding="utf-8")
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="out")

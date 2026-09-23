@@ -289,6 +289,8 @@ python check.py
 
 `check.py` validates the bundled 2,248-node input and its required output schema. It is not a validator for arbitrary user datasets or proof of model accuracy.
 
+CSV exports restrict `role` to the six specification values: `consolidator`, `transit`, `distributor`, `terminal`, `coordinator` and `peripheral`. A node cut off at the collection boundary is exported as `role=peripheral`, `role_detail=truncated`, `is_truncated=True`, with `role_base=role`. This mapping satisfies the export vocabulary; it does not reclassify the node's behavior. All 444 boundary nodes in the baseline remain present, and the analytical graph, Parquet results and priority calculation continue to distinguish `truncated`. The same contract applies to CLI exports, selected-row CSV, individual CSV and ZIP downloads, including downloads of older cached results.
+
 ## Troubleshooting
 
 - **Docker cannot connect:** start Docker Desktop/Engine and verify `docker version`. Use Linux containers.
