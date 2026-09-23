@@ -100,4 +100,3 @@ def assign_roles(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
     out.columns = ["role", "role_score", "evidence"]
     out["evidence"] = out.evidence.str.slice(0, 200)
     return out
-

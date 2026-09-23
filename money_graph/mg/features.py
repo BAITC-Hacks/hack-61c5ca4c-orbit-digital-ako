@@ -98,4 +98,3 @@ def compute_features(G, edges, nodes, tx, cfg) -> pd.DataFrame:
         df[c] = df[c].astype(int)
     df["turnover"] = df.in_kzt + df.out_kzt
     return df
-

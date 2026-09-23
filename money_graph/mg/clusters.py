@@ -66,4 +66,3 @@ def cluster_table(edges, df, roles, labels, priority) -> pd.DataFrame:
             "n_truncated": int((roles.loc[idx, "role"] == "truncated").sum()),
         })
     return pd.DataFrame(rows).sort_values("cluster_id")
-

@@ -73,4 +73,3 @@ class TaintModel:
                          "random_flow_left": round(float(np.mean(rnd)), 4),
                          "n_components": n_comp, "largest_component": largest})
         return pd.DataFrame(rows)
-

@@ -1,0 +1,26 @@
+{
+  "nodes": 2248,
+  "edges": 3119,
+  "roles": {
+    "peripheral": 1162,
+    "truncated": 444,
+    "terminal": 358,
+    "transit": 154,
+    "consolidator": 67,
+    "distributor": 46,
+    "coordinator": 17
+  },
+  "clusters": 71,
+  "tainted_flow_kzt": 253083784,
+  "cutoff_model": {
+    "train_nodes": 1723,
+    "base_rate_onward": 0.374,
+    "cv_auc": 0.66,
+    "std_coefs": {
+      "in_deg": 0.864,
+      "log_in_kzt": 0.034,
+      "days_left": -0.089
+    }
+  },
+  "runtime_sec": 8.1
+}

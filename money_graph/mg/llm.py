@@ -43,4 +43,3 @@ def rewrite_hypotheses(clusters: pd.DataFrame, max_clusters: int = 15) -> pd.Dat
         except Exception as e:  # сеть, лимиты, неверный ключ — не валим пайплайн
             print(f"  LLM: кластер {row['cluster_id']} — ошибка {e!r}, оставлен шаблон")
     return clusters
-

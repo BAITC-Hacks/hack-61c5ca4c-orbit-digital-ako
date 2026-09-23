@@ -153,4 +153,3 @@ document.querySelectorAll('#tcl tr.row').forEach(r=>r.onclick=()=>{const cid=+r.
 draw(ego(D.top[0].gid,1),D.top[0].gid);
 </script></body></html>
 """
-

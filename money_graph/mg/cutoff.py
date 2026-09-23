@@ -38,4 +38,3 @@ def estimate_onward(df: pd.DataFrame, period_end: str):
     report = {"train_nodes": int(len(train)), "base_rate_onward": round(float(y.mean()), 3),
               "cv_auc": round(float(auc), 3), "std_coefs": coefs}
     return p, report
-
