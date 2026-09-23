@@ -22,6 +22,7 @@ def _above(value, threshold):
 
 def assign_role(r: pd.Series, c: dict, bc_threshold: float):
     pt = r.pass_through
+    threshold = f"{c.get('min_tx_kzt', 5000):,}".replace(",", " ")
     if pd.isna(pt):
         pt_txt = "н/д"
     elif pt > 1.3:
@@ -34,12 +35,12 @@ def assign_role(r: pd.Series, c: dict, bc_threshold: float):
     # 0. нет ни одного ребра
     if r.in_deg == 0 and r.out_deg == 0:
         return ("peripheral", 1.0,
-                "Нет переводов ≥5 000 KZT внутри банка за июль. Роль не определить; нужен запрос по счёту.")
+                f"Нет переводов ≥{threshold} KZT внутри банка за период. Роль не определить; нужен запрос по счёту.")
 
     # 1. обрезан 4-м хопом: исходящие не выгружались
     if r.truncated_by_depth:
         return ("truncated", 1.0,
-                f"Обрезан на 4-м хопе: исходящие не выгружались. Получил {kzt(r.in_kzt)} от {r.in_deg} плат.; "
+                f"Обрезан на {int(r.depth)}-м хопе: исходящие не выгружались. Получил {kzt(r.in_kzt)} от {r.in_deg} плат.; "
                 f"оценка P(переводит дальше)={r.p_onward:.0%}.")
 
     # 2. координатор: и собирает, и раздаёт, и стоит на маршрутах
@@ -80,10 +81,10 @@ def assign_role(r: pd.Series, c: dict, bc_threshold: float):
                     f"{fs * 100:.0f}% ушло в течение 2 дней после поступления{lag}.")
 
     # 6. конечный получатель (только для полностью наблюдаемых хопов 0–3)
-    if r.out_deg == 0 and r.depth < 4 and (r.in_kzt >= c["terminal_min_in_kzt"] or r.in_deg >= c["terminal_min_in_deg"]):
+    if r.out_deg == 0 and r.depth < c.get("max_depth", 4) and (r.in_kzt >= c["terminal_min_in_kzt"] or r.in_deg >= c["terminal_min_in_deg"]):
         score = _clip(0.5 + 0.25 * min(r.in_deg / 4, 1) + 0.25 * min(r.in_kzt / 1e6, 1))
         return ("terminal", score,
-                f"Деньги оседают: получил {kzt(r.in_kzt)} от {r.in_deg} плат., исходящих ≥5 000 KZT нет "
+                f"Деньги оседают: получил {kzt(r.in_kzt)} от {r.in_deg} плат., исходящих ≥{threshold} KZT нет "
                 f"(хоп {r.depth} выгружен полностью).")
 
     # 7. периферия
@@ -93,7 +94,8 @@ def assign_role(r: pd.Series, c: dict, bc_threshold: float):
 
 
 def assign_roles(df: pd.DataFrame, cfg: dict) -> pd.DataFrame:
-    c = cfg["roles"]
+    c = {**cfg["roles"], "max_depth": cfg.get("max_depth", 4),
+         "min_tx_kzt": cfg.get("min_tx_kzt", 5000)}
     bc_threshold = df.betweenness.quantile(c["coordinator_min_betweenness_pct"])
     df = df.assign(bc_pct=df.betweenness.rank(pct=True))
     out = df.apply(lambda r: assign_role(r, c, bc_threshold), axis=1, result_type="expand")

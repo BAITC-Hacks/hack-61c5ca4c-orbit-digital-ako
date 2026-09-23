@@ -14,7 +14,7 @@
   <header class="app-header">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">◎</span>
-      <div><strong>Граф денег</strong><span>Проверка финансовой сети · июль 2026</span></div>
+      <div><strong>Граф денег</strong><span>Проверка финансовой сети · /*PERIOD*/</span></div>
     </div>
     <div class="header-actions">
       <span class="status"><span class="status-dot"></span>Локальный анализ</span>
@@ -31,7 +31,7 @@
   </section>
 
   <div class="notice" role="note">
-    <strong>Граница данных:</strong> исходящие переводы узлов на 4-м хопе не выгружались. Роли и связи — гипотезы для проверки.
+    <strong>Граница данных:</strong> исходящие переводы узлов на /*MAX_DEPTH*/-м хопе не выгружались. Роли и связи — гипотезы для проверки.
   </div>
 
   <main class="workspace">
@@ -49,7 +49,7 @@
           <input id="gid-search" type="search" inputmode="numeric" autocomplete="off" placeholder="Полный gid или часть номера">
           <button type="button" class="button primary" id="search-button">Найти</button>
         </div>
-        <p id="search-status" class="help" role="status" aria-live="polite">Можно искать любого из 2 248 узлов.</p>
+        <p id="search-status" class="help" role="status" aria-live="polite">Поиск по всем узлам выбранного графа.</p>
       </div>
 
       <div class="tab-panel active" id="tab-priority" role="tabpanel">
@@ -115,7 +115,7 @@
   </main>
 
   <footer class="app-footer">
-    <span>Данные обезличены · период 01–31.07.2026 · только внутрибанковские переводы ≥ 5 000 KZT</span>
+    <span>Данные обезличены · период /*PERIOD*/ · переводы ≥ /*MIN_TX*/ KZT в предоставленной выборке</span>
     <div><a href="clusters.csv" download>Кластеры CSV</a><a href="top_nodes.csv" download>Топ CSV</a><a href="requests.csv" download>Запросы CSV</a></div>
   </footer>
   <script>const D=/*DATA*/;</script>

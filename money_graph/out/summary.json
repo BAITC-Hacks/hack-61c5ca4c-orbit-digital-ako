@@ -1,6 +1,12 @@
 {
   "nodes": 2248,
   "edges": 3119,
+  "transactions": 4840,
+  "period_start": "2026-07-01",
+  "period_end": "2026-07-31",
+  "max_depth": 4,
+  "seeds": 81,
+  "min_tx_kzt": 5000,
   "roles": {
     "peripheral": 1162,
     "truncated": 444,
@@ -22,5 +28,5 @@
       "days_left": -0.089
     }
   },
-  "runtime_sec": 2.3
+  "runtime_sec": 2.2
 }

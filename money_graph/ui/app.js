@@ -305,7 +305,7 @@
         percent(node.fs) + ". Правило: диапазон " + Math.round(c.transit_pt_low * 100) + "–" +
         Math.round(c.transit_pt_high * 100) + "% либо быстрый поток ≥ " +
         Math.round(c.transit_min_fast_share * 100) + "% при передаче ≥ 50% видимого входа.";
-      case "terminal": return "Исходящих ≥ 5 000 KZT нет на полностью наблюдаемом хопе " + node.d + ".";
+      case "terminal": return "Исходящих ≥ " + number(D.summary.min_tx_kzt || 5000) + " KZT нет на полностью наблюдаемом хопе " + node.d + ".";
       case "truncated": return "Хоп 4: исходящие не входили в выгрузку. Этот узел нельзя считать конечным получателем.";
       default: return "Порогов других ролей узел не достиг; для seed без связей требуется дополнительная выгрузка.";
     }

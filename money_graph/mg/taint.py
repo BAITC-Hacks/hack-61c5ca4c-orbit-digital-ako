@@ -40,6 +40,8 @@ class TaintModel:
         """Доля всего меченого потока, которая исчезает, если заблокировать один узел."""
         _, _, total = self.propagate()
         impact = np.zeros(self.n)
+        if total <= 0:
+            return impact
         removed = np.zeros(self.n, dtype=bool)
         for i in range(self.n):
             removed[i] = True
@@ -61,17 +63,18 @@ class TaintModel:
             removed[list(removed_idx)] = True
             _, _, t = self.propagate(removed)
             if not with_components:
-                return t / total, None, None
+                return (t / total if total > 0 else 0.0), None, None
             H = G.subgraph([v for v in G if not removed[v]])
             comps = [len(c) for c in nx.connected_components(H)]
-            return t / total, len(comps), max(comps) if comps else 0
+            return (t / total if total > 0 else 0.0), len(comps), max(comps) if comps else 0
 
+        max_n = min(max_n, max(0, len(active) - 1))
         order = [self.idx[g] for g in order_gids[:max_n]]
         rows = []
         for k in range(0, max_n + 1):
             share, n_comp, largest = state(order[:k])
             rnd = [state(rng.choice(active, size=k, replace=False), with_components=False)[0]
-                   for _ in range(n_random)] if k else [1.0]
+                   for _ in range(n_random)] if k else [share]
             rows.append({"n_blocked": k, "tainted_flow_left": round(share, 4),
                          "random_flow_left": round(float(np.mean(rnd)), 4),
                          "n_components": n_comp, "largest_component": largest})

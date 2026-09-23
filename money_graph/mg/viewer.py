@@ -77,10 +77,14 @@ def write_viewer(path, df, edges, clusters, top, res, summary, vis_js, requests,
         "rules": cfg["roles"],
         "weights": cfg["priority_weights"],
         "colors": ROLE_COLORS,
-        "roleRu": ROLE_RU,
+        "roleRu": {**ROLE_RU, "truncated": f"Обрезан на {summary.get('max_depth', 4)}-м хопе"},
     }
     ui = ROOT / "ui"
     html = (ui / "index.html").read_text(encoding="utf-8")
+    period = f"{summary.get('period_start', '—')} — {summary.get('period_end', '—')}"
+    html = html.replace("/*PERIOD*/", period)
+    html = html.replace("/*MAX_DEPTH*/", str(summary.get("max_depth", 4)))
+    html = html.replace("/*MIN_TX*/", f"{summary.get('min_tx_kzt', 5000):,}".replace(",", " "))
     vendor_script = Path(vis_js).read_text(encoding="utf-8")
     data_script = "const D=" + _script_json(data) + ";"
     app_script = (ui / "app.js").read_text(encoding="utf-8")

@@ -21,6 +21,7 @@ from mg.features import build_graph, compute_features, load
 from mg.roles import assign_roles, kzt
 from mg.taint import TaintModel
 from mg.viewer import write_viewer
+from mg.validation import validate_data
 
 ROOT = Path(__file__).parent
 
@@ -29,22 +30,17 @@ def pct(s: pd.Series) -> pd.Series:
     return s.rank(pct=True, method="average").fillna(0)
 
 
-def main():
+def analyze(data_dir: Path, out: Path, cfg: dict):
     # Консоль Windows может использовать cp1252: лог не должен прерывать расчёт.
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="backslashreplace")
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=str(ROOT / "data"))
-    ap.add_argument("--out", default=str(ROOT / "out"))
-    ap.add_argument("--config", default=str(ROOT / "config.json"))
-    a = ap.parse_args()
-    cfg = json.loads(Path(a.config).read_text(encoding="utf-8"))
-    out = Path(a.out)
+    input_info = validate_data(Path(data_dir), cfg.get("min_tx_kzt", 0))
+    cfg = {**cfg, "period_end": input_info["period_end"], "max_depth": input_info["max_depth"]}
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
     log = lambda m: print(f"[{time.time() - t0:5.1f}s] {m}")
 
-    edges, nodes, tx = load(Path(a.data))
+    edges, nodes, tx = load(Path(data_dir))
     G = build_graph(edges, nodes)
     df = compute_features(G, edges, nodes, tx, cfg)
     log(f"метрики: {len(df)} узлов, {len(edges)} рёбер, {len(tx)} транзакций")
@@ -56,7 +52,7 @@ def main():
     df["block_impact"] = tm.block_impact()
     log(f"меченые деньги: общий поток {kzt(total_flow)} KZT; симулятор блокировки посчитан")
 
-    df["p_onward"], cutoff_report = estimate_onward(df, cfg["period_end"])
+    df["p_onward"], cutoff_report = estimate_onward(df, cfg["period_end"], cfg["max_depth"])
     log(f"обрезанные узлы: модель на {cutoff_report['train_nodes']} узлах, AUC={cutoff_report['cv_auc']}")
 
     roles = assign_roles(df, cfg)
@@ -69,7 +65,7 @@ def main():
            w["betweenness"] * pct(df.betweenness.where(df.betweenness > 0)) +
            w["seed_sources"] * pct(df.seed_sources.where(df.seed_sources > 0)) +
            w["turnover"] * pct(df.turnover.where(df.turnover > 0)))
-    df["priority_score"] = (raw / raw.max()).round(4)
+    df["priority_score"] = (raw / raw.max()).fillna(0).round(4) if raw.max() > 0 else 0.0
 
     labels = cluster(G, cfg)
     df["cluster_id"] = labels
@@ -113,7 +109,7 @@ def main():
                     f"Выгрузить входящие вне выборки и межбанк: {r.role}, приоритет {r.priority_score:.2f}"))
     for g, r in df[df.is_seed & (df.out_deg == 0)].iterrows():
         req.append((g, "seed_no_outgoing", 0.0,
-                    "Seed без исходящих ≥5 000 KZT: запросить межбанк, наличные, переводы <5 000 (дробление)"))
+                    f"Seed без исходящих ≥{cfg.get('min_tx_kzt', 5000):,} KZT: запросить межбанк, наличные, переводы ниже порога"))
     requests = pd.DataFrame(req, columns=["gid", "request_type", "weight", "reason"])
     requests.to_csv(out / "requests.csv", index=False)
 
@@ -121,10 +117,16 @@ def main():
     order = df.sort_values("priority_score", ascending=False).index.tolist()
     res = tm.resilience_curve(order, cfg["resilience_max_n"])
     res.to_csv(out / "resilience.csv", index=False)
-    log("устойчивость: блокировка топ-10 оставляет "
-        f"{res.loc[10, 'tainted_flow_left']:.0%} меченого потока (10 случайных: {res.loc[10, 'random_flow_left']:.0%})")
+    comparison_n = min(10, len(res) - 1)
+    log(f"устойчивость: блокировка топ-{comparison_n} оставляет "
+        f"{res.loc[comparison_n, 'tainted_flow_left']:.0%} меченого потока "
+        f"({comparison_n} случайных: {res.loc[comparison_n, 'random_flow_left']:.0%})")
 
-    summary = {"nodes": len(df), "edges": len(edges), "roles": df.role.value_counts().to_dict(),
+    summary = {"nodes": len(df), "edges": len(edges), "transactions": len(tx),
+               "period_start": input_info["period_start"], "period_end": input_info["period_end"],
+               "max_depth": input_info["max_depth"], "seeds": input_info["seeds"],
+               "min_tx_kzt": cfg.get("min_tx_kzt", 5000),
+               "roles": df.role.value_counts().to_dict(),
                "clusters": int(clusters.cluster_id.nunique()), "tainted_flow_kzt": round(float(total_flow)),
                "cutoff_model": cutoff_report, "runtime_sec": round(time.time() - t0, 1)}
     (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -134,6 +136,16 @@ def main():
         ROOT / "vendor" / "vis-network.min.js", requests, cfg,
     )
     log(f"готово: {out}/  роли: {summary['roles']}")
+    return summary
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", default=str(ROOT / "data"))
+    ap.add_argument("--out", default=str(ROOT / "out"))
+    ap.add_argument("--config", default=str(ROOT / "config.json"))
+    a = ap.parse_args()
+    analyze(Path(a.data), Path(a.out), json.loads(Path(a.config).read_text(encoding="utf-8")))
 
 
 if __name__ == "__main__":

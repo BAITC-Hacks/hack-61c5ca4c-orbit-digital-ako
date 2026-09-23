@@ -23,18 +23,26 @@ def _X(df, period_end):
     })
 
 
-def estimate_onward(df: pd.DataFrame, period_end: str):
-    train = df[df.depth.between(1, 3) & ~df.is_seed & (df.in_deg > 0)]
+def estimate_onward(df: pd.DataFrame, period_end: str, max_depth: int = 4):
+    train = df[df.depth.between(1, max_depth - 1) & ~df.is_seed & (df.in_deg > 0)]
     y = (train.out_deg > 0).astype(int)
-    model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
-    auc = cross_val_score(model, _X(train, period_end), y, cv=5, scoring="roc_auc").mean()
-    model.fit(_X(train, period_end), y)
-
     p = pd.Series(np.nan, index=df.index)
     mask = df.truncated_by_depth
-    p[mask] = model.predict_proba(_X(df[mask], period_end))[:, 1]
-
-    coefs = dict(zip(FEATURES, model[-1].coef_[0].round(3)))
-    report = {"train_nodes": int(len(train)), "base_rate_onward": round(float(y.mean()), 3),
-              "cv_auc": round(float(auc), 3), "std_coefs": coefs}
+    base_rate = float(y.mean()) if len(y) else 0.0
+    auc = None
+    coefs = {feature: 0.0 for feature in FEATURES}
+    if y.nunique() >= 2:
+        model = make_pipeline(StandardScaler(), LogisticRegression(max_iter=1000))
+        min_class = int(y.value_counts().min())
+        if min_class >= 2:
+            auc = round(float(cross_val_score(model, _X(train, period_end), y,
+                                               cv=min(5, min_class), scoring="roc_auc").mean()), 3)
+        model.fit(_X(train, period_end), y)
+        if mask.any():
+            p[mask] = model.predict_proba(_X(df[mask], period_end))[:, 1]
+        coefs = dict(zip(FEATURES, model[-1].coef_[0].round(3)))
+    else:
+        p[mask] = base_rate
+    report = {"train_nodes": int(len(train)), "base_rate_onward": round(base_rate, 3),
+              "cv_auc": auc, "std_coefs": coefs}
     return p, report

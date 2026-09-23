@@ -59,7 +59,7 @@ def compute_features(G, edges, nodes, tx, cfg) -> pd.DataFrame:
     df["in_tx"] = pd.Series(dict(G.in_degree(weight="n_tx")))
     df["out_tx"] = pd.Series(dict(G.out_degree(weight="n_tx")))
     df["pass_through"] = df.out_kzt / df.in_kzt.replace(0, np.nan)
-    df["truncated_by_depth"] = (df.depth == 4) & (df.out_deg == 0)
+    df["truncated_by_depth"] = (df.depth == cfg.get("max_depth", 4)) & (df.out_deg == 0)
 
     # сколько разных seed-клиентов прямо платили узлу / косвенно достают до него
     df["seed_payers"] = edges[edges.src.isin(seeds)].groupby("dst").src.nunique()
@@ -74,7 +74,10 @@ def compute_features(G, edges, nodes, tx, cfg) -> pd.DataFrame:
     # посредничество (направленное, без весов — «сколько кратчайших маршрутов идёт через узел»)
     bc = nx.betweenness_centrality(G, normalized=True)
     df["betweenness"] = pd.Series(bc)
-    hubs, auth = nx.hits(G, max_iter=500)
+    try:
+        hubs, auth = nx.hits(G, max_iter=500)
+    except (nx.PowerIterationFailedConvergence, ValueError):
+        hubs, auth = ({v: 0.0 for v in G}, {v: 0.0 for v in G})
     df["hub"] = pd.Series(hubs)
     df["authority"] = pd.Series(auth)
 
