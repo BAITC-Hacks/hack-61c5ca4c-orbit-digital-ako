@@ -8,6 +8,7 @@ nodes_roles.csv, clusters.csv, top_nodes.csv (+ requests.csv, resilience.csv, vi
 """
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -29,6 +30,9 @@ def pct(s: pd.Series) -> pd.Series:
 
 
 def main():
+    # Консоль Windows может использовать cp1252: лог не должен прерывать расчёт.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="backslashreplace")
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", default=str(ROOT / "data"))
     ap.add_argument("--out", default=str(ROOT / "out"))
@@ -108,7 +112,8 @@ def main():
     for g, r in df[df.is_seed & (df.out_deg == 0)].iterrows():
         req.append((g, "seed_no_outgoing", 0.0,
                     "Seed без исходящих ≥5 000 KZT: запросить межбанк, наличные, переводы <5 000 (дробление)"))
-    pd.DataFrame(req, columns=["gid", "request_type", "weight", "reason"]).to_csv(out / "requests.csv", index=False)
+    requests = pd.DataFrame(req, columns=["gid", "request_type", "weight", "reason"])
+    requests.to_csv(out / "requests.csv", index=False)
 
     # ---------- устойчивость сети
     order = df.sort_values("priority_score", ascending=False).index.tolist()
@@ -122,7 +127,10 @@ def main():
                "cutoff_model": cutoff_report, "runtime_sec": round(time.time() - t0, 1)}
     (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    write_viewer(out / "viewer.html", df, edges, clusters, top_out, res, summary, ROOT / "vendor" / "vis-network.min.js")
+    write_viewer(
+        out / "viewer.html", df, edges, clusters, top_out, res, summary,
+        ROOT / "vendor" / "vis-network.min.js", requests, cfg,
+    )
     log(f"готово: {out}/  роли: {summary['roles']}")
 
 
